@@ -1,5 +1,5 @@
 -- Card Battle — exécuter dans l'éditeur SQL de Supabase, une seule fois.
--- Activez également Auth > Providers > Anonymous Sign-Ins.
+-- Configurez la connexion technique indiquée dans le README.
 create extension if not exists pgcrypto;
 create table public.cards (
  id uuid primary key default gen_random_uuid(), owner uuid not null references auth.users(id),

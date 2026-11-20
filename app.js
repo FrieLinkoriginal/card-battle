@@ -6,22 +6,41 @@ function message(text, isError = false) { const el = $('notice'); el.textContent
 function tab(name) { currentTab = name; document.querySelectorAll('.view').forEach(x => x.classList.toggle('active', x.id === 'view-' + name)); document.querySelectorAll('.nav').forEach(x => x.classList.toggle('active', x.dataset.tab === name)); $('page-title').innerHTML = ({home:'Bienvenue dans l’arène <span>✦</span>',create:'L’atelier des cartes <span>✦</span>',collection:'Tes cartes, ton univers <span>✦</span>',battle:'Prêt pour le combat ? <span>✦</span>',rogue:'En route pour l’expédition <span>✦</span>'})[name]; if(name === 'collection') renderCollection(); if(name === 'battle' && gameId) refreshGame(); if(name === 'rogue') renderRogue(); }
 document.querySelectorAll('[data-tab]').forEach(x => x.addEventListener('click',()=>tab(x.dataset.tab)));
 document.querySelectorAll('[data-go]').forEach(x => x.addEventListener('click',()=>tab(x.dataset.go)));
-$('settings-open').onclick=()=> $('settings').showModal(); $('settings-close').onclick=()=> $('settings').close();
+let playerName = localStorage.getItem('cb-player-name') || '';
+function updateProfile() { $('player-name').value=playerName; $('avatar').textContent=playerName ? playerName[0].toUpperCase() : '✦'; $('avatar').title=playerName || 'Ton profil'; }
+function showProfile(errorText='') { $('profile-name').value=playerName; $('profile-error').textContent=errorText; $('profile-error').classList.toggle('hidden',!errorText); $('profile-cancel').classList.toggle('hidden',!playerName || !db); if(!$('profile').open) $('profile').showModal(); }
+$('profile-open').onclick=()=>showProfile();
+$('profile-cancel').onclick=()=>$('profile').close();
+$('profile').addEventListener('cancel', e=>{if(!db || !playerName)e.preventDefault();});
 function err(e) { console.error(e); message(e?.message || 'Une erreur est survenue.',true); }
-async function connect(url,key) {
- if(!window.supabase) throw Error('La bibliothèque Supabase ne s’est pas chargée. Vérifie ta connexion Internet.');
- if(!url || !key) throw Error('Renseigne l’URL et la clé publique de Supabase.');
- const u = new URL(url); if(u.protocol !== 'https:') throw Error('L’URL Supabase doit utiliser HTTPS.');
- if(key.startsWith('sb_secret_') || key.includes('service_role')) throw Error('Utilise une clé publique, jamais une clé secrète.');
- // Legacy JWT keys: reject a decoded service_role key as well.
- try { let payload=JSON.parse(atob((key.split('.')[1]||'').replace(/-/g,'+').replace(/_/g,'/'))); if(payload.role==='service_role') throw Error('Clé service_role interdite.'); } catch(e) { if(e.message==='Clé service_role interdite.') throw e; }
- let client = window.supabase.createClient(url,key); const session = await client.auth.getSession(); if(session.error) throw session.error;
- let sessionUser = session.data.session?.user;
- if(!sessionUser) { const r=await client.auth.signInAnonymously(); if(r.error) throw r.error; sessionUser=r.data.user; }
- db=client; user=sessionUser; localStorage.setItem('cb-url',url); localStorage.setItem('cb-key',key); $('connection-dot').classList.add('on'); $('connection-label').textContent='Connecté à Supabase'; await loadCards();
+async function connect() {
+ if(!window.supabase) throw Error('Impossible de charger le jeu. Vérifie ta connexion Internet et réessaie.');
+ const url=window.CARD_BATTLE_CONFIG?.supabaseUrl, key=window.CARD_BATTLE_CONFIG?.supabaseAnonKey;
+ if(!url || !key) throw Error('Le service de jeu n’est pas encore configuré. Contacte le créateur du jeu.');
+ const client=window.supabase.createClient(url,key); const session=await client.auth.getSession(); if(session.error) throw session.error;
+ let sessionUser=session.data.session?.user;
+ if(!sessionUser) {
+  // Compte technique unique par navigateur. Pas d’adresse réelle : aucun email n’est envoyé.
+  // Le secret aléatoire et la session restent dans ce navigateur et ne permettent pas
+  // la récupération du compte sur un autre appareil.
+  let credentials; try { credentials=JSON.parse(localStorage.getItem('cb-device-account')||'null'); } catch { credentials=null; }
+  if(!credentials?.email || !credentials?.password) {
+   if(!window.crypto?.getRandomValues) throw Error('Ce navigateur ne permet pas de créer un profil sécurisé.');
+   const randomHex=n=>Array.from(crypto.getRandomValues(new Uint8Array(n)),x=>x.toString(16).padStart(2,'0')).join('');
+   credentials={email:'cardbattle-'+randomHex(16)+'@example.com',password:randomHex(32)};
+   localStorage.setItem('cb-device-account',JSON.stringify(credentials));
+  }
+  // En cas de réponse perdue après l’inscription, la reconnexion évite un doublon.
+  let result=await client.auth.signInWithPassword(credentials);
+  if(result.error && /invalid login credentials/i.test(result.error.message)) result=await client.auth.signUp(credentials);
+  if(result.error) throw Error('Connexion au jeu impossible. Vérifie Internet et réessaie.');
+  if(!result.data.session || !result.data.user) throw Error('Le service de jeu n’est pas prêt. Contacte le créateur du jeu.');
+  sessionUser=result.data.user;
+ }
+ db=client; user=sessionUser; try { await loadCards(); } catch(e) { db=null; user=null; throw Error('Impossible de charger ta collection. Réessaie dans un instant.'); } $('connection-dot').classList.add('on'); $('connection-label').textContent='Prêt à jouer';
 }
-$('settings-form').onsubmit=async e=>{ e.preventDefault(); try {await connect($('sb-url').value.trim(),$('sb-key').value.trim()); $('settings').close(); message('Connexion réussie ! Ton atelier est prêt.');} catch(ex){err(ex);} };
-async function ready() { if(!db || !user){ $('settings').showModal(); throw Error('Connecte d’abord ton projet Supabase.'); } }
+$('profile-form').onsubmit=async e=>{e.preventDefault(); const btn=$('profile-submit'),name=$('profile-name').value.trim(); if(!name)return; btn.disabled=true;btn.textContent='Connexion…';$('profile-error').classList.add('hidden');try { if(!db||!user)await connect(); playerName=name;localStorage.setItem('cb-player-name',name);updateProfile();$('profile').close();message('Bienvenue, '+name+' !'); }catch(ex){console.error(ex);$('profile-error').textContent=ex.message||'Connexion impossible. Réessaie.';$('profile-error').classList.remove('hidden');}finally{btn.disabled=false;btn.textContent='C’est parti ! →';} };
+async function ready() { if(!db || !user || !playerName){ showProfile(); throw Error('Choisis ton pseudo pour jouer.'); } }
 async function rpc(name,args) { const {data,error} = await db.rpc(name,args); if(error) throw error; return data; }
 async function loadCards() { const {data,error}=await db.from('cards').select('*').eq('owner',user.id).order('created_at',{ascending:false}); if(error) throw error; cards=data||[]; $('card-count').textContent=cards.length; renderCollection(); }
 function renderCollection(){ $('collection-grid').innerHTML=cards.length?cards.map(c=>`<article class="collect-card"><img src="${esc(c.drawing)}" alt="Dessin de ${esc(c.name)}"><h4>${esc(c.name)}</h4><div class="meta">${esc(c.type)} · ${c.price} or ${c.power?'· ✦ '+esc(c.power):''}</div><div class="stats"><span>◈ ${c.gold_stat}</span><span>⚔ ${c.attack_stat}</span><span>⬟ ${c.defense_stat}</span></div></article>`).join(''):`<div class="empty">✦<p>Ta collection est encore vide. Il est temps de créer ta première carte !</p><button class="outline" id="empty-create">Créer une carte →</button></div>`; const btn=$('empty-create'); if(btn)btn.onclick=()=>tab('create'); }
@@ -54,7 +73,7 @@ function renderGame(g,players,board,logs){
 }
 async function gameAction(name,args){try{await rpc(name,args);await refreshGame();}catch(ex){err(ex);}}
 setInterval(()=>{if(gameId&&currentTab==='battle')refreshGame();},3000);
-(async()=>{renderCollection();const url=localStorage.getItem('cb-url')||window.CARD_BATTLE_CONFIG?.supabaseUrl||'',key=localStorage.getItem('cb-key')||window.CARD_BATTLE_CONFIG?.supabaseAnonKey||'';$('sb-url').value=url;$('sb-key').value=key;if(url&&key)try{await connect(url,key);}catch(ex){err(ex);}})();
+(async()=>{renderCollection();updateProfile();if(!playerName){showProfile();return;}try{await connect();}catch(ex){console.error(ex);showProfile(ex.message||'Connexion impossible. Réessaie.');}})();
 
 // Solo roguelike prototype: local state only, independent of multiplayer.
 let run = null;

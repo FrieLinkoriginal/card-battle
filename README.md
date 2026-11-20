@@ -4,11 +4,11 @@ Application HTML statique + Supabase. Fonctionne avec GitHub Pages (aucun serveu
 
 ## Installation Supabase
 
-Cette copie est configurée pour le projet Supabase « Card creator ». La migration y a déjà été installée : ne relancez pas `schema.sql` dans ce projet. Il reste à activer les connexions anonymes dans son tableau de bord. Les étapes suivantes servent à configurer un autre projet vierge.
+Cette copie est configurée pour le projet Supabase « Card creator ». La migration y a déjà été installée : ne relancez pas `schema.sql` dans ce projet. Les connexions anonymes ne sont pas utilisées. Les étapes suivantes servent à configurer un autre projet vierge.
 1. Créer un projet sur https://supabase.com/.
-2. Dans **Authentication > Sign In / Providers**, activer **Anonymous Sign-Ins**. Les joueurs n'ont pas besoin de compte, mais leur collection est liée à la session enregistrée dans leur navigateur : vider les données ou changer de navigateur peut la faire disparaître. Pour une vraie persistance multi-appareils, ajouter une connexion par compte.
+2. Dans **Authentication > Sign In / Providers**, activer la connexion par e-mail et désactiver la confirmation des adresses. Les joueurs choisissent seulement un pseudo : le jeu crée automatiquement un identifiant technique aléatoire et un mot de passe secret enregistrés dans le navigateur, sans utiliser d'adresse e-mail réelle. Ce n'est pas un compte récupérable par pseudo : vider les données du navigateur ou changer d'appareil peut faire perdre la collection. Pour une vraie persistance multi-appareils, ajouter une authentification récupérable.
 3. Dans **SQL Editor**, exécuter le contenu de `schema.sql` dans un projet vierge. Ce script crée les tables, politiques RLS et fonctions ; il n'est pas destiné à être relancé tel quel.
-4. Copier l'URL du projet et la **clé publique** (publishable / anon) depuis les réglages API. Ne jamais utiliser la clé `service_role` dans le navigateur. Ajouter les valeurs dans `config.js` avant publication, ou les saisir dans l'écran de connexion du jeu (elles restent dans le navigateur). Une clé publique est conçue pour être exposée ; les permissions sont contrôlées par RLS.
+4. Copier l'URL du projet et la **clé publique** (publishable / anon) depuis les réglages API. Ne jamais utiliser la clé `service_role` dans le navigateur. Ajouter les valeurs dans `config.js` avant publication : les joueurs n’ont aucun réglage Supabase à saisir. Une clé publique est conçue pour être exposée ; les permissions sont contrôlées par RLS.
 5. Pour une production publique, activer CAPTCHA et limites de débit sur les connexions anonymes, surveiller le stockage et revoir les règles de sécurité. Les dessins sont stockés en base : éviter les gros volumes sans ajouter quotas et modération.
 
 ## Publication GitHub Pages
@@ -28,3 +28,5 @@ Cette copie est configurée pour le projet Supabase « Card creator ». La migra
 
 ## Limites
 Prototype sans matchmaking, sans reconnexion inter-appareils, sans protection anti-abus complète ni outils de modération. Il ne doit pas être considéré comme prêt pour une mise en production publique. Tous les joueurs doivent pouvoir accéder au même projet Supabase.
+
+**Sécurité :** la confirmation e-mail automatique est activée sur tout le projet Supabase, donc les adresses e-mail de toutes ses applications ne sont pas vérifiées. Ne pas utiliser ce projet pour d'autres applications qui s'appuient sur la vérification d'e-mail. Ajouter des limites d'inscription, une protection anti-abus, des outils de modération et une authentification récupérable avant toute mise en production publique.
