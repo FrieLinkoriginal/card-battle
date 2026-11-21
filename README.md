@@ -3,7 +3,7 @@
 Arcade de précision à un bouton, **duels en ligne de 2 à 5 joueurs**, **mode rythme** et boutique de 70 skins de cercle.
 
 - **Arcade** : l'aiguille tourne, une cible apparaît, tu appuies. 3 vies, le dernier debout gagne.
-- **Rythme** : la musique impose le tempo, tu joues les temps. **Le meilleur score à la fin du morceau gagne** — personne n'est éliminé.
+- **Rythme** : la musique impose le tempo, tu joues les temps. **Le meilleur score à la fin du morceau gagne** — personne n'est éliminé. Ton cercle et ceux de tes potes tournent côte à côte en semi-transparent.
 - **Boutique** : 50 skins basiques + 20 prestige, achetés avec les points, visibles par tes potes en duel.
 
 ## Jouer
@@ -20,7 +20,16 @@ Ouvre `index.html` (ou l'aperçu). `Espace` / clic / tap pour jouer, `M` pour le
 - L'aiguille fait un tour par mesure, une cible par temps : tu appuies quand elle traverse la zone.
 - **Vies = armure de combo** : un raté casse le combo et coûte une vie. À **0 vie**, tu perds **20 % de ton score** et tu continues — **tu ne sors jamais de la partie**.
 - **Le classement est le score, en direct.** Si un joueur perd ses vies mais garde plus de points, il reste premier jusqu'à ce qu'on le dépasse.
-- **Robots** (0 à 3) qui jouent au tempo avec une précision réglable (Facile / Normal / Fort) : de quoi s'entraîner seul et remplir les salons.
+- **Cercles des potes** : à côté du tien, en **semi-transparent** et plus petits, avec **leur vrai skin** et leur aiguille **calée sur le même tempo** ; nom, score et vies en direct, halo rouge quand ils prennent un dégât.
+- **4 types de cibles**, débloqués progressivement dans le morceau :
+  | Cible | Repère | Règle |
+  | --- | --- | --- |
+  | Normale | arc clair (cyan / doré) | appuie quand l'aiguille est dedans |
+  | **Piège** | arc rouge pointillé + ✕ | **ne clique pas** : cliquer = 1 vie. La laisser passer est la bonne réponse |
+  | **Tenue** | arc orange + point | garde appuyé du début à la fin de l'arc : relâcher trop tôt ou dépasser la fin = 1 vie |
+  | **Gauche / Droite** | arc violet + flèche ◀ ▶ | clic gauche ou droit selon la flèche (mauvais bouton = 1 vie) |
+- **Commandes** : souris (clic gauche / droit), clavier `Q` / `D` (ou `←` / `→`), mobile = **moitié gauche / moitié droite de l'écran**, `Espace` = clic normal, relâchement = fin de tenue.
+- **Robots** (0 à 3) qui jouent au tempo avec une précision réglable (Facile / Normal / Fort) et **gèrent les nouveaux types** (ils ignorent les pièges, choisissent le bon bouton, relâchent la tenue au bon moment) : de quoi s'entraîner seul et remplir les salons.
 - Fin du morceau : classement complet, points crédités (+150 vainqueur, +75 2ᵉ, +30 sinon).
 
 ### Spotify (optionnel, Premium)
@@ -44,7 +53,7 @@ Ouvre `index.html` (ou l'aperçu). `Espace` / clic / tap pour jouer, `M` pour le
 | --- | --- |
 | `index.html` | interface (accueil, rythme, boutique, salon, résultats) |
 | `style.css` | DA néon, HUD, grille de skins, responsive |
-| `game.js` | boucle, règles arcade + rythme, boutique, orchestration des duels |
+| `game.js` | boucle, règles arcade + rythme (4 types de cibles, cercles des potes), boutique, orchestration des duels |
 | `skins.js` | catalogue des 70 skins + rendu canvas |
 | `music.js` | séquenceur Web Audio : batterie, basse, arpège, nappes |
 | `spotify.js` | OAuth PKCE + Web Playback SDK (isolé, jamais bloquant) |
@@ -53,13 +62,14 @@ Ouvre `index.html` (ou l'aperçu). `Espace` / clic / tap pour jouer, `M` pour le
 
 - **Aucune donnée en base** : salons = canaux Realtime publics éphémères (`tempo-room-CODE`).
 - **Aucune clé secrète** dans le navigateur (clé `anon` uniquement, prévue pour être publique).
-- **Déterminisme** : graine tirée par l'hôte → même suite de cibles, même tirage pour chaque joueur. Les notes du mode rythme découlent du BPM et du nombre de mesures, donc identiques partout, sans tirage.
+- **Déterminisme** : graine tirée par l'hôte → même suite de cibles, même tirage pour chaque joueur. Les notes du mode rythme découlent du BPM, du nombre de mesures **et d'une graine partagée** : mêmes notes, mêmes types (pièges, tenues, gauche/droite) sur tous les écrans.
 - **Robots déterministes** : simulés localement à partir de la graine, identiques sur tous les écrans, zéro trafic réseau supplémentaire.
 - Profil, points, skins, série : `localStorage` (clé `tempo.profile.v2`).
 
 ## Réglages
 
 - `game.js` : `MAX_LIVES`, `HIT_WINDOW` (±100 ms), `PERFECT_WINDOW` (±35 ms), `widthForLevel()`.
+- Types de cibles : `ryBuildNotes()` (seuils de progression 28 % pièges / 40 % latérales / 55 % tenues, roll `mulberry32`), gain tenue `170 × multiplicateur`, fenêtre de relâchement `[-0.24 s, +0.32 s]`.
 - `music.js` : ajouter un morceau = une ligne dans `TRACKS` (BPM, mesures, gamme).
 - `skins.js` : ajouter un skin = une ligne dans `BASIC` ou `premium`.
 - `online.js` / `spotify.js` : identifiants des projets.

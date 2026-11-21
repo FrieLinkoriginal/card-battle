@@ -29,6 +29,7 @@
 
   const fmt = (n) => Number(n || 0).toLocaleString('fr-FR');
 
+
   // ---------------------------------------------------------------- profil
   const PKEY = 'tempo.profile.v2';
 
@@ -212,7 +213,7 @@
   const muteBtn = $('mute');
   const toastEl = $('toast');
 
-  const PANELS = ['homePanel', 'shopPanel', 'onlinePanel', 'roomPanel', 'overPanel'].map($);
+  const PANELS = ['homePanel', 'shopPanel', 'rhythmPanel', 'onlinePanel', 'roomPanel', 'overPanel'].map($);
 
   function showPanel(id) {
     PANELS.forEach((p) => p.classList.toggle('hidden', p.id !== id));
@@ -676,7 +677,7 @@
     drawFloats();
     ctx.restore();
 
-    drawChips();
+    drawGhosts();
 
     if (G.flash > 0.001) {
       ctx.globalAlpha = clamp(G.flash, 0, 1) * 0.34;
@@ -693,6 +694,8 @@
     G.flash = Math.max(0, G.flash - dt * 3.2);
     G.pulse = Math.max(0, G.pulse - dt * 4);
     G.cooldown = Math.max(0, G.cooldown - dt);
+
+    updateGhosts(dt);
 
     if (G.rule === 'rhythm') {
       ryUpdate(dt);
@@ -935,8 +938,8 @@
     renderLives();
   }
 
-  function press() {
-    if (G.rule === 'rhythm') { ryPress(); return; }
+  function press(side) {
+    if (G.rule === 'rhythm') { ryPress(side || 0); return; }
     if (G.screen !== 'play' || G.cooldown > 0) return;
     if (isOverlayVisible()) return;
 
@@ -998,7 +1001,8 @@
       lives: G.lives,
       score: G.score,
       alive: !G.eliminated,
-      deadAt: G.deadAt || 0
+      deadAt: G.deadAt || 0,
+      theta: G.rule === 'rhythm' ? ryTheta() : G.theta
     });
     if (force) G.nsent = 0;
   }
@@ -1293,6 +1297,7 @@
       st.score = Math.max(0, p.score | 0);
       st.alive = !!p.alive;
       st.deadAt = p.deadAt || 0;
+      st.theta = typeof p.theta === 'number' ? p.theta : st.theta;
       return;
     }
 
@@ -1576,11 +1581,44 @@
 
   function noteAngle(beat) { return -Math.PI / 2 + beat * NOTE_BEAT; }
 
-  function ryBuildNotes(bpm, bars) {
+  function ryBuildNotes(bpm, bars, seed) {
     const beat = 60 / bpm;
+    const rnd = mulberry32((seed || 1) * 2654435761 % 2147483647);
     const notes = [];
-    for (let b = 4; b < bars * 4; b++) {
-      notes.push({ t: b * beat, angle: noteAngle(b), golden: b % 16 === 0, done: false, hit: false });
+    const total = bars * 4;
+    let b = 4;
+
+    while (b < total) {
+      const prog = (b - 4) / Math.max(1, total - 4);
+      const roll = rnd();
+      let type = 'normal';
+
+      if (prog > 0.28 && roll < 0.13) type = 'trap';
+      else if (prog > 0.40 && roll < 0.27) type = 'side';
+      else if (prog > 0.55 && roll < 0.40) type = 'hold';
+
+      const note = {
+        t: b * beat,
+        angle: noteAngle(b),
+        type: type,
+        golden: type === 'normal' && b % 16 === 0,
+        side: 0,
+        end: 0,
+        done: false,
+        hit: false,
+        held: false
+      };
+
+      if (type === 'side') note.side = rnd() < 0.5 ? 1 : 2;
+      if (type === 'hold') {
+        note.end = note.t + beat * 2 - beat * 0.06;
+        note.span = 2;
+        b += 2;
+      } else {
+        b += 1;
+      }
+
+      notes.push(note);
     }
     return notes;
   }
@@ -1604,6 +1642,11 @@
 
     for (let i = 0; i < notes.length; i++) {
       const n = notes[i];
+      if (n.type === 'trap') {
+        cumScore.push(score);
+        cumLives.push(lives);
+        continue;
+      }
       if (rnd() < skill) {
         combo += 1;
         const perfect = rnd() < 0.12 + skill * 0.28;
@@ -1633,7 +1676,7 @@
 
   function rySetup(opts) {
     const track = opts.track;
-    const notes = ryBuildNotes(opts.bpm || track.bpm, opts.bars || track.bars);
+    const notes = ryBuildNotes(opts.bpm || track.bpm, opts.bars || track.bars, opts.seed || 1);
 
     RHY.track = track;
     RHY.notes = notes;
@@ -1645,6 +1688,7 @@
     RHY.botSkill = opts.skill === undefined ? botSkill : opts.skill;
     RHY.rivals = [];
     RHY.bots = [];
+    RHY.hold = null;
 
     const count = Math.max(0, Math.min(3, opts.botCount === undefined ? botCount : opts.botCount));
     for (let i = 0; i < count; i++) {
@@ -1724,13 +1768,13 @@
     return clamp(isFinite(v) ? v : 120, 50, 220);
   }
 
-  function ryPress() {
-    if (G.screen !== 'play' || G.cooldown > 0) return;
+  function ryPress(side) {
+    if (G.screen !== 'play' || G.cooldown > 0 || RHY.hold) return;
     const t = ryTime();
     let idx = -1;
     let err = 1e9;
 
-    for (let i = RHY.next; i < Math.min(RHY.notes.length, RHY.next + 3); i++) {
+    for (let i = RHY.next; i < Math.min(RHY.notes.length, RHY.next + 4); i++) {
       const n = RHY.notes[i];
       if (n.done) continue;
       const e = Math.abs(t - n.t);
@@ -1738,33 +1782,67 @@
     }
 
     if (idx < 0 || err > HIT_WINDOW) {
-      // appui à contretemps : ignoré, aucune punition
-      G.flash = Math.max(G.flash, 0.12);
+      G.flash = Math.max(G.flash, 0.10);
       G.flashColor = '255,255,255';
       return;
     }
 
     const n = RHY.notes[idx];
+
+    // --- piège : il ne fallait pas appuyer
+    if (n.type === 'trap') {
+      n.done = true;
+      ryDamage('PIÈGE !', n);
+      return;
+    }
+
+    // --- gauche / droite
+    if (n.type === 'side') {
+      const chosen = side === 0 ? 1 : side;
+      if (chosen !== n.side) {
+        n.done = true;
+        ryDamage(n.side === 1 ? 'GAUCHE !' : 'DROITE !', n);
+        return;
+      }
+    }
+
     n.done = true;
     n.hit = true;
-
     const perfect = err <= PERFECT_WINDOW;
+    const px = cx + Math.cos(n.angle) * R;
+    const py = cy + Math.sin(n.angle) * R;
+    const col = n.type === 'side' ? 'hsl(268 100% 72%)'
+      : n.type === 'hold' ? 'hsl(24 100% 64%)'
+        : (n.golden ? 'hsl(45 100% 65%)' : 'hsl(' + ryHue() + ' 100% 68%)');
+
+    // --- note tenue : on démarre la charge
+    if (n.type === 'hold') {
+      n.held = true;
+      RHY.hold = { note: n, t0: t };
+      G.combo += 1;
+      G.hits += 1;
+      burst(px, py, col, 10, 190, 1.0);
+      floatText(px, py - 16, 'TIENS', col, 17);
+      sfx.hit(G.combo, false);
+      G.cooldown = 0.02;
+      return;
+    }
+
     G.combo += 1;
     G.hits += 1;
     if (perfect) G.perfects += 1;
     if (G.combo > G.bestCombo) G.bestCombo = G.combo;
 
     const mult = Math.min(5, 1 + Math.floor(G.combo / 8));
-    const gain = Math.round(100 * mult * (n.golden ? 3 : 1) * (perfect ? 1.5 : 1));
+    let gain = Math.round(100 * mult * (n.golden ? 3 : 1) * (perfect ? 1.5 : 1));
+    if (n.type === 'side') gain = Math.round(gain * 1.15);
     G.score += gain;
 
-    const col = n.golden ? 'hsl(45 100% 65%)' : 'hsl(' + ryHue() + ' 100% 68%)';
-    const px = cx + Math.cos(n.angle) * R;
-    const py = cy + Math.sin(n.angle) * R;
     burst(px, py, col, perfect ? 20 : 10, perfect ? 320 : 210, 1.1);
     ringPulse(col, perfect ? 4 : 2.2);
     G.shake = Math.max(G.shake, perfect ? 0.28 : 0.12);
-    floatText(px, py - 16, perfect ? 'PARFAIT' : '+' + gain, perfect ? '#ffffff' : col, perfect ? 21 : 17);
+    const label = n.type === 'side' ? (n.side === 1 ? 'GAUCHE' : 'DROITE') : (perfect ? 'PARFAIT' : '+' + gain);
+    floatText(px, py - 16, label, perfect ? '#ffffff' : col, perfect ? 21 : 17);
     if (n.golden) sfx.gold(); else sfx.hit(G.combo, perfect);
 
     if (!G.beatRecord && profile.best > 0 && G.score > profile.best) {
@@ -1778,31 +1856,66 @@
     if (G.mode === 'online') sendState(true);
   }
 
-  function ryMiss(n) {
+  function ryRelease() {
+    const h = RHY.hold;
+    if (!h) return;
+    RHY.hold = null;
+    const n = h.note;
+    const t = ryTime();
+
+    if (t < n.end - 0.24) { ryDamage('TROP TÔT', n); return; }
+    if (t > n.end + 0.32) { ryDamage('DÉPASSÉ', n); return; }
+
+    const mult = Math.min(5, 1 + Math.floor(G.combo / 8));
+    const gain = Math.round(170 * mult);
+    G.score += gain;
+    G.hits += 1;
+    if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+
+    const px = cx + Math.cos(n.angle) * R;
+    const py = cy + Math.sin(n.angle) * R;
+    burst(px, py, 'hsl(24 100% 66%)', 22, 330, 1.1);
+    ringPulse('hsl(24 100% 66%)', 4);
+    floatText(px, py - 16, '+' + gain, '#ffc38a', 21);
+    G.shake = Math.max(G.shake, 0.26);
+    sfx.gold();
+
+    if (G.mode === 'online') sendState(true);
+  }
+
+  function ryDamage(reason, n) {
     G.combo = 0;
     G.lives -= 1;
-    G.shake = 0.9;
-    G.flash = 0.7;
+    G.shake = 1;
+    G.flash = 0.85;
     G.flashColor = '255,70,95';
+    RHY.hold = null;
 
     const px = cx + Math.cos(n ? n.angle : G.theta) * R;
     const py = cy + Math.sin(n ? n.angle : G.theta) * R;
-    burst(px, py, '#ff5a72', 14, 240);
-    floatText(cx, cy + R * 0.78, 'RATÉ', '#ff7f92', 20);
+    burst(px, py, '#ff5a72', 18, 300);
+    floatText(cx, cy + R * 0.78, reason || 'RATÉ', '#ff8fa3', 21);
     sfx.miss();
 
-    if (G.lives <= 0) {
-      const lost = Math.round(G.score * 0.2);
-      G.score = Math.max(0, G.score - lost);
-      G.lives = 1;
-      G.flash = 1;
-      G.shake = 1.4;
-      floatText(cx, cy - R * 0.55, 'KO −20 %', '#ff8fa3', 26);
-      sfx.over();
+    if (G.lives > 0) {
+      renderLives();
+      if (G.mode === 'online') sendState(true);
+      return;
     }
 
+    const lost = Math.round(G.score * 0.2);
+    G.score = Math.max(0, G.score - lost);
+    G.lives = 1;
+    G.flash = 1;
+    G.shake = 1.4;
+    floatText(cx, cy - R * 0.55, 'KO −20 %', '#ff8fa3', 26);
+    sfx.over();
     renderLives();
     if (G.mode === 'online') sendState(true);
+  }
+
+  function ryMiss(n) {
+    ryDamage('RATÉ', n);
   }
 
   function updateBots(t) {
@@ -1866,10 +1979,17 @@
       const n = RHY.notes[RHY.next];
       if (!n.done) {
         n.done = true;
-        // retour d'onglet : on se resynchronise sans punir
-        if (gap <= 0.7) ryMiss(n);
+        // piège : ne rien faire est la bonne réponse
+        if (gap <= 0.7 && n.type !== 'trap') ryMiss(n);
       }
       RHY.next += 1;
+    }
+
+    // note tenue : rester appuyé au-delà de la fin = dépassement
+    if (RHY.hold && t > RHY.hold.note.end + 0.30) {
+      const held = RHY.hold.note;
+      RHY.hold = null;
+      ryDamage('DÉPASSÉ', held);
     }
 
     // filet de sécurité Spotify : si la lecture ne démarre pas, on passe à l'horloge locale
@@ -1974,7 +2094,10 @@
     ctx.stroke();
     ctx.restore();
 
-    SKINS.ring(ctx, cx, cy, R, mySkin(), G.time, 6);
+    ctx.save();
+    ctx.globalAlpha = 0.42;
+    SKINS.ring(ctx, cx, cy, R, mySkin(), G.time, 4);
+    ctx.restore();
     drawTicks();
 
     // notes à venir
@@ -1984,30 +2107,15 @@
 
     for (let i = RHY.next; i < last; i++) {
       const n = RHY.notes[i];
+      if (n.done || n.type !== 'hold') continue;
+      drawNote(n, clamp(1 - (n.t - t) / (2.2 * beat), 0, 1), winAngle, perfectAngle, true);
+    }
+
+    for (let i = RHY.next; i < last; i++) {
+      const n = RHY.notes[i];
       if (n.done) continue;
-      const dt = n.t - t;
-      const near = clamp(1 - dt / (2.2 * beat), 0, 1);
-      const col = n.golden ? 'hsl(45 100% 64%)' : 'hsl(' + ryHue() + ' 100% 64%)';
-
-      ctx.save();
-      ctx.globalAlpha = 0.22 + near * 0.78;
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = col;
-      ctx.shadowColor = col;
-      ctx.shadowBlur = 18 + near * 16;
-      ctx.lineWidth = 13 + near * 4;
-      ctx.beginPath();
-      ctx.arc(cx, cy, R, n.angle - winAngle, n.angle + winAngle);
-      ctx.stroke();
-
-      ctx.globalAlpha = 0.35 + near * 0.65;
-      ctx.shadowBlur = 10;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.arc(cx, cy, R, n.angle - perfectAngle, n.angle + perfectAngle);
-      ctx.stroke();
-      ctx.restore();
+      const near = clamp(1 - (n.t - t) / (2.2 * beat), 0, 1);
+      drawNote(n, near, winAngle, perfectAngle, false);
     }
 
     // aiguille
@@ -2069,7 +2177,22 @@
     drawFloats();
     ctx.restore();
 
-    drawRhythmChips();
+    drawGhosts();
+
+    // rappel des commandes au démarrage du morceau
+    if (t > 0 && t < 9) {
+      const a = Math.min(1, t) * clamp((9 - t) / 2, 0, 1) * 0.75;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.textAlign = 'center';
+      ctx.font = '600 ' + (W < 560 ? 11 : 12.5) + 'px ' + SANS;
+      ctx.fillStyle = '#cfe9ff';
+      ctx.fillText('◀ gauche : clic gauche / Q / moitié d\'écran', W / 2, H - 60);
+      ctx.fillText('droite : clic droit / D / moitié d\'écran ▶', W / 2, H - 42);
+      ctx.fillStyle = 'rgba(255,180,150,0.92)';
+      ctx.fillText('piège ✕ : ne clique pas  ·  tenue : garde appuyé', W / 2, H - 22);
+      ctx.restore();
+    }
 
     // classement en direct
     const rows = ryStandings();
@@ -2079,6 +2202,239 @@
     ctx.font = '700 12px ' + SANS;
     ctx.fillStyle = rows.length > 1 ? (rank === 1 ? '#ffd76a' : 'rgba(234,246,255,0.55)') : 'rgba(234,246,255,0.4)';
     ctx.fillText(rank + ' / ' + rows.length, cx, cy - R - 44);
+    ctx.restore();
+  }
+
+  function drawNote(n, near, winAngle, perfectAngle, guideOnly) {
+    const isHold = n.type === 'hold';
+    const col = n.type === 'trap' ? 'hsl(348 100% 64%)'
+      : n.type === 'side' ? 'hsl(268 100% 72%)'
+        : isHold ? 'hsl(24 100% 64%)'
+          : (n.golden ? 'hsl(45 100% 64%)' : 'hsl(' + ryHue() + ' 100% 64%)');
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    if (isHold) {
+      const endA = n.angle + 2 * NOTE_BEAT;
+      ctx.globalAlpha = 0.10 + near * 0.22;
+      ctx.strokeStyle = col;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, n.angle, endA);
+      ctx.stroke();
+      if (guideOnly) { ctx.restore(); return; }
+
+      if (RHY.hold && RHY.hold.note === n) {
+        const cur = Math.min(ryTheta(), endA);
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = '#ffd2a6';
+        ctx.shadowColor = '#ffb067';
+        ctx.lineWidth = 15;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, n.angle, cur);
+        ctx.stroke();
+      }
+    }
+
+    ctx.globalAlpha = 0.22 + near * 0.78;
+    ctx.strokeStyle = col;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = n.type === 'trap' ? 4 : 18 + near * 16;
+    ctx.lineWidth = 13 + near * 4;
+    if (n.type === 'trap') ctx.setLineDash([11, 10]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, n.angle - winAngle, n.angle + winAngle);
+    ctx.stroke();
+    if (n.type === 'trap') ctx.setLineDash([]);
+
+    if (!isHold && n.type !== 'trap') {
+      ctx.globalAlpha = 0.35 + near * 0.65;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, n.angle - perfectAngle, n.angle + perfectAngle);
+      ctx.stroke();
+    }
+
+    if (n.type === 'normal') { ctx.restore(); return; }
+
+    const bx = cx + Math.cos(n.angle) * (R + 34);
+    const by = cy + Math.sin(n.angle) * (R + 34);
+    ctx.globalAlpha = (0.55 + near * 0.45) * 0.9;
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(4,8,14,0.72)';
+    ctx.beginPath();
+    ctx.arc(bx, by, 12, 0, TAU);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.6 + near * 0.4;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = col;
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = 3.2;
+
+    if (n.type === 'trap') {
+      ctx.beginPath();
+      ctx.moveTo(bx - 6, by - 6);
+      ctx.lineTo(bx + 6, by + 6);
+      ctx.moveTo(bx + 6, by - 6);
+      ctx.lineTo(bx - 6, by + 6);
+      ctx.stroke();
+    } else if (n.type === 'side') {
+      const d = n.side === 1 ? -1 : 1;
+      ctx.beginPath();
+      ctx.moveTo(bx + d * 7.5, by);
+      ctx.lineTo(bx - d * 6, by - 7.5);
+      ctx.lineTo(bx - d * 6, by + 7.5);
+      ctx.closePath();
+      ctx.fill();
+    } else if (n.type === 'hold') {
+      ctx.beginPath();
+      ctx.arc(bx, by, 5.5, 0, TAU);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx, by - 11);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------- cercles fantômes des potes
+  const GHOSTS = {};
+
+  function rivalList() {
+    const rows = [];
+
+    if (G.rule === 'rhythm') {
+      RHY.bots.forEach((b) => rows.push({
+        id: b.id, name: b.name, skin: b.skin, score: b.score, lives: b.lives, theta: ryTheta()
+      }));
+      RHY.rivals.forEach((r) => rows.push({
+        id: r.id, name: r.name, skin: r.skin, score: r.score, lives: r.lives, theta: ryTheta()
+      }));
+    }
+
+    if (G.mode === 'online' && ROOM.match && G.rule !== 'rhythm') {
+      ROOM.match.roster.forEach((p) => {
+        if (p.id === myId()) return;
+        const st = ROOM.match.states[p.id] || {};
+        rows.push({
+          id: p.id,
+          name: p.name,
+          skin: p.skin,
+          score: st.score || 0,
+          lives: st.lives === undefined ? MAX_LIVES : st.lives,
+          theta: st.theta === undefined ? -Math.PI / 2 : st.theta
+        });
+      });
+    }
+
+    return rows.slice(0, 4);
+  }
+
+  function updateGhosts(dt) {
+    const list = rivalList();
+    list.forEach((g) => {
+      const s = GHOSTS[g.id] || (GHOSTS[g.id] = {
+        theta: g.theta || -Math.PI / 2, score: g.score, lives: g.lives, flash: 0, flashCol: '92,225,255'
+      });
+      if (g.theta !== undefined) {
+        const d = angDiff(g.theta, s.theta);
+        s.theta += d * Math.min(1, dt * 9);
+      }
+      if (g.score > s.score) { s.flash = 1; s.flashCol = '92,225,255'; }
+      if (g.lives < s.lives) { s.flash = 1; s.flashCol = '255,90,114'; }
+      s.score = g.score;
+      s.lives = g.lives;
+      s.flash = Math.max(0, s.flash - dt * 2.2);
+    });
+  }
+
+  function drawGhosts() {
+    const list = rivalList();
+    if (!list.length) return;
+
+    const gr = clamp(R * 0.30, 28, 68);
+    const dist = R + gr + (W < 760 ? 16 : 52);
+    const slots = [-135, -45, 135, 45].map((a) => (a * Math.PI) / 180);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let i = 0; i < list.length && i < slots.length; i++) {
+      const g = list[i];
+      const skin = SKINS.byId[g.skin] || SKINS.byId[SKINS.DEFAULT_ID];
+      const px = clamp(cx + Math.cos(slots[i]) * dist, gr + 12, W - gr - 12);
+      const py = clamp(cy + Math.sin(slots[i]) * dist, gr + 72, H - gr - 14);
+      const st = GHOSTS[g.id] || { theta: g.theta || 0, flash: 0, flashCol: '255,90,114' };
+      const alive = (g.lives || 0) > 0;
+
+      // halo
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = 'rgba(6,12,22,0.55)';
+      ctx.beginPath();
+      ctx.arc(px, py, gr + 8, 0, TAU);
+      ctx.fill();
+
+      // anneau du pote (semi-transparent)
+      ctx.globalAlpha = alive ? 0.5 : 0.22;
+      SKINS.ring(ctx, px, py, gr, skin, G.time, Math.max(2.6, gr * 0.13));
+
+      // aiguille du pote
+      ctx.globalAlpha = alive ? 0.85 : 0.25;
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.shadowColor = skin.colors[0] || '#ffffff';
+      ctx.shadowBlur = alive ? 8 : 0;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px + Math.cos(st.theta) * (gr - 8), py + Math.sin(st.theta) * (gr - 8));
+      ctx.lineTo(px + Math.cos(st.theta) * (gr + 8), py + Math.sin(st.theta) * (gr + 8));
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(px + Math.cos(st.theta) * gr, py + Math.sin(st.theta) * gr, 2.2, 0, TAU);
+      ctx.fill();
+
+      // flash dégât / point
+      if (st.flash > 0.01) {
+        ctx.globalAlpha = st.flash * 0.85;
+        ctx.strokeStyle = 'rgb(' + st.flashCol + ')';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(px, py, gr + 8 + (1 - st.flash) * 14, 0, TAU);
+        ctx.stroke();
+      }
+
+      // nom
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = 'rgba(234,246,255,0.72)';
+      ctx.font = '600 ' + Math.round(clamp(gr * 0.24, 8, 11)) + 'px ' + SANS;
+      const nm = g.name.length > 9 ? g.name.slice(0, 8) + '…' : g.name;
+      ctx.fillText(nm, px, py - gr - 16);
+
+      // score
+      ctx.fillStyle = g.lives > 0 ? 'rgba(255,255,255,0.9)' : 'rgba(255,140,160,0.9)';
+      ctx.font = '700 ' + Math.round(clamp(gr * 0.26, 8.5, 12)) + 'px ' + MONO;
+      ctx.fillText(fmt(g.score), px, py + gr + 15);
+
+      // vies
+      for (let k = 0; k < MAX_LIVES; k++) {
+        ctx.beginPath();
+        ctx.fillStyle = k < (g.lives || 0) ? 'rgba(126,240,255,0.95)' : 'rgba(255,255,255,0.13)';
+        ctx.arc(px - 7 + k * 7, py + gr + 28, 1.9, 0, TAU);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -2142,6 +2498,16 @@
 
     if (e.code === 'KeyM') { toggleMute(); return; }
 
+    if (e.code === 'KeyQ' || e.code === 'ArrowLeft') {
+      if (!isOverlayVisible()) press(1);
+      return;
+    }
+
+    if (e.code === 'KeyD' || e.code === 'ArrowRight') {
+      if (!isOverlayVisible()) press(2);
+      return;
+    }
+
     if (e.code === 'Escape') {
       if (!isOverlayVisible()) goHome();
       return;
@@ -2150,7 +2516,25 @@
 
   cvs.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    press();
+    const mouse = e.pointerType === 'mouse' || e.pointerType === 'pen' || !e.pointerType;
+    const side = mouse
+      ? (e.button === 2 ? 2 : 1)
+      : ((e.clientX === undefined ? W / 2 : e.clientX) < W / 2 ? 1 : 2);
+    press(side);
+  });
+
+  cvs.addEventListener('pointerup', () => {
+    if (G.rule === 'rhythm') ryRelease();
+  });
+
+  window.addEventListener('pointerup', () => {
+    if (G.rule === 'rhythm') ryRelease();
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+      if (G.rule === 'rhythm') ryRelease();
+    }
   });
 
   document.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -2465,5 +2849,8 @@
   requestAnimationFrame(frame);
 
   // expose pour les tests hors navigateur
-  window.__TEMPO__ = { G: G, ROOM: ROOM, RHY: RHY, profile: profile, SKINS: SKINS };
+  window.__TEMPO__ = {
+    G: G, ROOM: ROOM, RHY: RHY, profile: profile, SKINS: SKINS,
+    ghosts: GHOSTS, rivalList: rivalList, press: press, release: ryRelease, theta: ryTheta
+  };
 })();
