@@ -34,9 +34,10 @@
     <div class="stack">
       <button class="play" id="soloBtn">Jouer</button>
       <div class="dual">
+        <button class="ghost" id="rhythmBtn">Rythme</button>
         <button class="ghost" id="onlineBtn">En ligne</button>
-        <button class="ghost" id="shopBtn">Boutique</button>
       </div>
+      <button class="ghost" id="shopBtn">Boutique</button>
     </div>
 
     <p class="daily" id="dailyLine"></p>
@@ -57,6 +58,53 @@
     </div>
     <div class="skinGrid" id="skinGrid"></div>
     <p class="hint" id="shopHint">Clique sur un skin pour l'acheter puis l'équiper.</p>
+  </section>
+
+  <!-- ------------------------------------------------------------ rythme -->
+  <section class="panel hidden" id="rhythmPanel">
+    <div class="panelHead">
+      <button class="iconBtn" data-back aria-label="Retour">←</button>
+      <h2>Mode rythme</h2>
+      <span class="spacer"></span>
+    </div>
+
+    <p class="roomSub">La musique se termine : le meilleur score gagne. Personne n'est éliminé.</p>
+
+    <div class="trackList" id="trackList"></div>
+
+    <div class="botRow">
+      <span class="botLabel">Robots</span>
+      <div class="seg" id="botSeg">
+        <button data-bots="0">0</button>
+        <button data-bots="1">1</button>
+        <button data-bots="2" class="active">2</button>
+        <button data-bots="3">3</button>
+      </div>
+    </div>
+
+    <div class="botRow">
+      <span class="botLabel">Niveau</span>
+      <div class="seg" id="skillSeg">
+        <button data-skill="0.55">Facile</button>
+        <button data-skill="0.72" class="active">Normal</button>
+        <button data-skill="0.88">Fort</button>
+      </div>
+    </div>
+
+    <button class="play" id="startRhythmBtn">Lancer le morceau</button>
+
+    <details class="spotifyBox">
+      <summary>🎧 Spotify (Premium)</summary>
+      <p class="hint" id="spStatus">Non connecté.</p>
+      <button class="ghost" id="spConnectBtn">Se connecter à Spotify</button>
+      <input id="spTrackInput" placeholder="https://open.spotify.com/track/…" autocomplete="off" spellcheck="false">
+      <div class="spRow">
+        <input id="spBpmInput" type="number" min="50" max="220" value="120" inputmode="numeric" aria-label="BPM">
+        <button class="ghost" id="spTapBtn">Tap tempo</button>
+        <button class="ghost" id="spLoadBtn">Charger</button>
+      </div>
+      <p class="hint" id="spHint">Colle un lien, règle le BPM (tap tempo), puis lance.</p>
+    </details>
   </section>
 
   <!-- ------------------------------------------------------------ en ligne -->
@@ -81,7 +129,7 @@
       <button class="ghost" id="joinBtn">Rejoindre</button>
     </div>
 
-    <p class="hint" id="onlineHint">2 à 5 joueurs · 3 vies · le dernier debout gagne</p>
+    <p class="hint" id="onlineHint">2 à 5 joueurs · arcade ou rythme · le meilleur gagne</p>
   </section>
 
   <!-- ------------------------------------------------------------ salon -->
@@ -93,6 +141,23 @@
     </div>
 
     <p class="roomSub" id="roomStatus">Connexion…</p>
+
+    <div class="roomSettings">
+      <div class="seg" id="modeSeg">
+        <button data-mode="arcade" class="active">Arcade</button>
+        <button data-mode="rhythm">Rythme</button>
+      </div>
+      <div id="roomRhythmOpts" class="hidden">
+        <select id="roomTrack" class="select" aria-label="Morceau"></select>
+        <div class="seg" id="roomBotSeg">
+          <button data-bots="0">0</button>
+          <button data-bots="1">1</button>
+          <button data-bots="2" class="active">2</button>
+          <button data-bots="3">3</button>
+        </div>
+      </div>
+    </div>
+
     <ul class="playerList" id="playerList"></ul>
     <button class="play" id="startMatchBtn">Lancer la partie</button>
     <p class="hint" id="roomHint">Partage le code à tes potes.</p>
@@ -115,6 +180,8 @@
 
 <script src="vendor/supabase.js"></script>
 <script src="skins.js"></script>
+<script src="music.js"></script>
+<script src="spotify.js"></script>
 <script src="online.js"></script>
 <script src="game.js"></script>
 </body>
