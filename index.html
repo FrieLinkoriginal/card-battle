@@ -1,9 +1,47 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171620"><title>Card Battle — Ton dessin, ta bataille</title><link rel="stylesheet" href="style.css"><script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script defer src="app.js"></script></head><body>
-<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-icon">✦</span><span>CARD<br><b>BATTLE</b></span></div><div class="side-label">TON AVENTURE</div><nav><button data-tab="arena" class="active"><span>⚔</span> Arène</button><button data-tab="collection"><span>▦</span> Mon deck <em id="deck-badge">0</em></button><button data-tab="create"><span>✎</span> Créer une carte</button><button data-tab="rules"><span>☷</span> Règles du jeu</button></nav><div class="side-bottom"><div class="side-tip"><span>✦</span><strong>Dessine ton destin.</strong><p>Chaque carte a son histoire. À toi de l’inventer.</p></div><button id="change-name" class="side-link">✎ &nbsp; Modifier mon pseudo</button><div id="connection" class="connection"><i></i> Connexion…</div></div></aside>
-<main><header class="topbar"><div><span class="eyebrow">LE JEU DE CARTES QUE TU DESSINES</span><h1 id="title">Bienvenue dans l’arène <span>✦</span></h1></div><div class="profile"><span id="profile-name-label">Joueur</span><span id="avatar">✦</span></div></header><div id="notice" class="notice hidden" role="status"></div>
-<section id="arena" class="view active"><div id="lobby"><div class="intro"><div><span class="eyebrow">RÉUNIS TES AMIS</span><h2>La bataille commence ici.</h2><p>Crée un salon ou rejoins une partie avec un code.</p></div><div id="deck-status" class="deck-pill">✦ &nbsp; Ton deck se prépare</div></div><div class="lobby-grid"><div class="panel create-lobby"><div class="panel-icon">⚔</div><h3>Créer un salon</h3><p>Choisis le format de la partie et invite tes amis.</p><label>FORMAT DE JEU<select id="mode"><option value="duel">1 contre 1 · Duel</option><option value="melee">2 à 5 joueurs · Chacun pour soi</option><option value="teams">2 contre 2 · Équipes</option></select></label><label class="checkbox"><input type="checkbox" id="share"> <span><b>Partager les decks</b><small>Mélanger les cartes de tous et les distribuer pour cette partie.</small></span></label><button id="create-room" class="primary full">Créer un salon <span>→</span></button></div><div class="panel join-lobby"><div class="panel-icon violet">⌘</div><h3>Rejoindre un salon</h3><p>Entre le code que ton ami t’a partagé.</p><label>CODE DU SALON<input id="room-code" placeholder="EX. 4A5B6C7D" maxlength="8" autocomplete="off"></label><button id="join-room" class="secondary full">Rejoindre la partie <span>→</span></button><div class="join-art"><span>♜</span><span>✦</span><span>♞</span></div></div></div><div class="how"><span class="how-icon">✦</span><div><b>Première fois ici ?</b><p>Ton deck de 20 cartes a été créé pour toi. Tu peux aussi dessiner les tiennes dans l’atelier.</p></div><button data-go="create">Créer une carte →</button></div></div><div id="game" class="hidden"></div></section>
-<section id="collection" class="view"><div class="intro"><div><span class="eyebrow">TON UNIVERS</span><h2>Ton deck & ta collection.</h2><p>Active ou retire des cartes de ton deck. Il n’y a pas de limite maximale.</p></div><div id="collection-count" class="deck-pill"></div></div><div id="collection-warning"></div><div id="cards-grid" class="cards-grid"></div></section>
-<section id="create" class="view"><div class="intro"><div><span class="eyebrow">L’ATELIER</span><h2>Donne vie à une carte.</h2><p>Dessine, choisis son prix, puis tire ses caractéristiques.</p></div></div><div class="editor"><div class="panel"><div class="panel-heading"><div><h3>Ton dessin</h3><p>À toi de créer ton monstre.</p></div><span class="tag">TOILE LIBRE</span></div><div class="canvas-wrap"><canvas id="canvas" width="480" height="360"></canvas></div><div class="canvas-tools"><label>Couleur <input type="color" id="color" value="#32293f"></label><label>Épaisseur <input type="range" id="size" min="1" max="30" value="6"></label><button id="clear" class="text-button">↺ Effacer</button></div></div><div class="panel details"><h3>Sa fiche</h3><p>Le hasard prépare le reste.</p><label>NOM DE LA CARTE<input id="card-name" maxlength="30" placeholder="Ex. Petit dragon"></label><label>PRIX EN PIÈCES <span id="price-label" class="right">1</span><input id="price" type="range" min="1" max="20" value="1"><small>Plus le prix est élevé, plus le budget de points augmente.</small></label><label>MUSIQUE <span class="muted">· FACULTATIF</span><input id="music" type="file" accept="audio/*"><small>Un fichier audio de 1 Mo maximum, joué quand la carte est posée.</small></label><div id="roll-result" class="roll-result"><span>✦</span> Tire les caractéristiques pour découvrir ta carte.</div><button id="roll" class="secondary full">✧ &nbsp; Tirer / relancer</button><button id="save-card" class="primary full" disabled>Créer ma carte <span>→</span></button></div></div></section>
-<section id="rules" class="view"><div class="intro"><div><span class="eyebrow">À GARDER SOUS LA MAIN</span><h2>Les règles de la partie.</h2><p>Un tour à la fois, et que le meilleur roi gagne.</p></div></div><div class="rules-grid"><article class="panel"><span class="rule-num">01</span><h3>Début de partie</h3><p>Chaque roi commence avec 20 PV et 1 pièce. Chaque joueur reçoit 3 cartes, dont au moins une carte à 1 pièce produisant de l’or. Le deck doit contenir au moins 4 cartes et une telle carte.</p></article><article class="panel"><span class="rule-num">02</span><h3>Ton tour</h3><p>Au début de tes tours suivants, tes mines produisent, puis tu pioches une carte. Pose une seule carte : en mine, en attaque ou en défense. Son prix est payé immédiatement.</p></article><article class="panel"><span class="rule-num">03</span><h3>Le combat</h3><p>La carte au centre attaque le joueur suivant. Défends-toi, ou subis ses dégâts en posant à la mine ou en attaque. Le surplus attaque − défense touche le roi. Le vainqueur reste ou passe au centre ; à égalité les deux cartes sont défaussées.</p></article><article class="panel"><span class="rule-num">04</span><h3>Types & victoire</h3><p>Feu &gt; Nature &gt; Eau &gt; Feu. Le type avantagé gagne +50 % sur sa statistique de combat, arrondi au-dessus. Neutre n’a pas d’affinité. Un roi à 0 PV ou la dernière carte piochée signifie l’élimination.</p></article><article class="panel"><span class="rule-num">05</span><h3>Tour sauté</h3><p>Si aucune carte n’est abordable, ton roi subit l’attaque et tu défausses une carte. À ton prochain tour ta main est renouvelée : priorité aux cartes différentes, puis les anciennes complètent si nécessaire.</p></article><article class="panel"><span class="rule-num">06</span><h3>Les pouvoirs</h3><p>Prospecteur : +2 pièces en mine. Furie : +2 attaque. Rempart : +2 défense. Un pouvoir consomme des points lors de la création.</p></article></div></section><footer>FAIT POUR L’IMAGINATION <span>✦</span> CARD BATTLE</footer></main></div>
-<dialog id="profile-modal"><form id="profile-form"><span class="eyebrow">BIENVENUE</span><h2>Choisis ton pseudo.</h2><p>Pas de compte Supabase à créer pour jouer.</p><label>TON PSEUDO<input id="nickname" maxlength="20" required placeholder="Ton nom de joueur"></label><p class="small">Ton profil est lié à ce navigateur. Ne supprime pas ses données si tu veux garder tes cartes.</p><p id="profile-error" class="error hidden"></p><button class="primary full" type="submit" id="profile-submit">C’est parti ! →</button><button id="cancel-profile" class="text-button hidden" type="button">Annuler</button></form></dialog>
-</body></html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05070c">
+<title>TEMPO — un seul bouton</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='25' fill='none' stroke='%235ce1ff' stroke-width='5'/%3E%3Ccircle cx='32' cy='7' r='6' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game" aria-label="Terrain de jeu"></canvas>
+
+<div class="hud">
+  <div class="lives" id="lives" aria-label="Vies restantes"></div>
+  <div class="right">
+    <div class="pill" id="record">Record 0</div>
+    <button id="mute" aria-label="Couper le son" title="Son (M)">🔊</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="panel" id="menu">
+    <h1>TEMPO</h1>
+    <p class="tag">Un seul bouton · zéro excuse</p>
+    <p class="how">
+      Appuie quand l'aiguille traverse la zone.<br>
+      Le cœur de la zone = <b>PARFAIT</b> (score ×1,5).<br>
+      Chaque cartouche manquée coûte une vie.
+    </p>
+    <button class="play" id="startBtn">Jouer</button>
+    <p class="hint">Espace · clic · tap</p>
+  </div>
+
+  <div class="panel hidden" id="over">
+    <p class="label">Partie terminée</p>
+    <div class="scoreBig" id="finalScore">0</div>
+    <p class="recordLine" id="recordLine">Record : 0</p>
+    <p class="stats" id="finalStats"></p>
+    <button class="play" id="retryBtn">Rejouer</button>
+    <p class="hint">Espace · clic · tap</p>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
