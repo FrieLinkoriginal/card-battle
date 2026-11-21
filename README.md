@@ -1,54 +1,59 @@
 # TEMPO
 
-Un jeu d'arcade de précision **à un seul bouton**. Une aiguille tourne autour d'un cercle,
-une cible apparaît ; tu appuies au bon moment. Ça dure trente secondes, et tu recommences.
+Arcade de précision à un bouton **avec duels en ligne de 2 à 5 joueurs** et une boutique de 70 skins de cercle.
 
-Aucune dépendance, aucun build, aucun asset externe : trois fichiers statiques.
+Une aiguille tourne, une cible apparaît, tu appuies au bon moment. Trois vies, une séquence de cibles identique pour tous : le dernier debout gagne.
 
 ## Jouer
 
-Ouvre `index.html` (ou l'aperçu) et appuie sur **Espace**, clique ou tape l'écran.
-Sur mobile, n'importe quel tap fonctionne. `M` coupe le son.
+Ouvre `index.html` (ou l'aperçu). `Espace` / clic / tap pour jouer, `M` pour le son, `Échap` pour revenir au menu.
 
-## Règles
+### Solo
+- 3 vies, combo jusqu'à ×9, cibles dorées, inversion de sens au niveau 4.
+- Fin de partie : `score ÷ 40` points, record sauvegardé.
 
-- **Réussite** : l'aiguille est dans la zone colorée → points + combo +1.
-- **Parfait** : l'aiguille est dans le liseré blanc au centre → score ×1,5 et gerbe d'étincelles.
-- **Raté** : l'aiguille est ailleurs → une vie perdue, combo remis à zéro.
-- Trois vices et la partie s'arrête. Chaque nouveau record est sauvegardé dans le navigateur.
+### En ligne (2 à 5 joueurs)
+1. **En ligne → Créer un salon** : un code à 5 lettres apparaît.
+2. Les potes font **En ligne → code → Rejoindre**.
+3. L'hôte lance : compte à rebours de 3 s, **même graine**, donc même séquence de cibles pour tout le monde.
+4. 3 vies chacun. Le **dernier debout** gagne ; les éliminés passent en spectateur et regardent les mini-cercles des autres.
+5. Résultats classés, puis **Revanche** en un clic (hôte).
 
-## Ce qui rend la boucle accrocheuse
+Les mini-cercles en bas de l'écran affichent le score, les vies et **le skin équipé de chaque pote**.
 
-| Levier | Mise en œuvre |
-| --- | --- |
-| Parties courtes | 3 vies, mort en ~20 à 60 s → « encore une ». |
-| Progression lisible | Une cible tous les 6 succès : la zone rétrécit, l'aiguille accélère. |
-| Récompense de la prise de risque | Multiplicateur de combo (jusqu'à ×9), cibles dorées (×3, plus petites), bonus PARFAIT. |
-| Surprise | À partir du niveau 4, l'aiguille peut **inverser son sens** sans prévenir. |
-| Feedback immédiat | Screen shake, particules, anneaux d'onde, flash, texte flottant, sons synthétisés. |
-| Enjeu personnel | Record visible en permanence, alerte « NOUVEAU RECORD » en pleine partie, stats de fin. |
-| Zéro friction | Redémarrage instantané (Espace / clic), aucune installation, chargement immédiat. |
-
-## Courbe de difficulté
-
-- Vitesse angulaire : `2,55 rad/s` au niveau 1 → plafond `7,4 rad/s`.
-- Largeur de la cible : `0,262 rad` → plancher `0,064 rad` (les cibles dorées sont 26 % plus étroites).
-- Après chaque succès, la nouvelle cible est placée à une distance calculée en **temps de réaction**
-  (0,6 à 1,3 s), pour que la vitesse ne rende jamais le jeu illisible.
-
-Tout est réglable en haut de `game.js` : `speedForLevel`, `widthForLevel`, `HITS_PER_LEVEL`, `MAX_LIVES`.
+### Boutique et points
+- **Points** : gagnés en fin de partie (solo : `score ÷ 40` ; multi : +150 victoire, +75 2ᵉ, +30 sinon).
+- **Bonus quotidien** : 100 + 50 × jours de série (plafond 450), réclamé automatiquement à l'ouverture.
+- **50 skins basiques** (120 → 414 ◆, les 3 premiers offerts) et **20 skins prestige** (2 200 → 6 000 ◆) : dégradés animés, conic, arc-en-ciel, pulsation, pointillés, double anneau, halo.
+- Acheter équipe immédiatement. Le skin équipé s'affiche chez les autres joueurs pendant les duels.
 
 ## Technique
 
-- `index.html` / `style.css` : interface, HUD, menus.
-- `game.js` : boucle `requestAnimationFrame`, rendu Canvas 2D, logique, audio Web Audio API.
-- Sauvegarde via `localStorage` (clé `tempo.save.v1`), sans compte ni réseau.
-- Responsive (téléphone, tablette, bureau), `devicePixelRatio` géré, aucun scroll.
-- Audio 100 % synthétisé : aucun fichier à héberger, aucun droit à gérer.
+| Fichier | Rôle |
+| --- | --- |
+| `index.html` | interface (accueil, boutique, salon, résultats), canvas |
+| `style.css` | DA néon, HUD, grille de skins, responsive |
+| `game.js` | boucle, règles, boutique, points, orchestration des duels |
+| `skins.js` | catalogue des 70 skins + rendu canvas / aperçu CSS |
+| `online.js` | salons temps réel Supabase (présence + broadcast) |
+| `vendor/supabase.js` | client Supabase officiel, embarqué (aucun CDN) |
+| `assets/` | — |
+
+- **Aucune donnée en base** : les salons sont des canaux Realtime publics et éphémères (`tempo-room-CODE`). La présence transporte pseudo + skin, le broadcast transporte vies / score / élimination.
+- **Aucune clé secrète** dans le navigateur : uniquement la clé publique (`anon`), prévue pour être exposée.
+- **Déterminisme** : la graine est tirée par l'hôte, puis chaque client génère la même suite de cibles (`mulberry32`). Les tirages sont à nombre fixe à chaque succès, donc deux joueurs reçoivent exactement la même séquence.
+- Le profil (points, skins, record, série) reste **local au navigateur** (`localStorage`, clé `tempo.profile.v2`).
+- Si le réseau est coupé, le solo et la boutique continuent de fonctionner ; le mode en ligne affiche une erreur explicite.
+
+## Réglages
+
+En haut de `game.js` : `MAX_LIVES`, `HITS_PER_LEVEL`, `speedForLevel()`, `widthForLevel()`.
+Dans `skins.js` : ajouter un skin = une ligne dans `BASIC` ou `premium`.
+Dans `online.js` : `SUPABASE_URL` / `SUPABASE_KEY` pour brancher un autre projet.
 
 ## Publier
 
-Dépose les trois fichiers à la racine du dépôt et active GitHub Pages, ou sers le dossier :
+Dépose les fichiers à la racine du dépôt et active GitHub Pages, ou sers le dossier :
 
 ```bash
 python3 -m http.server 8000
