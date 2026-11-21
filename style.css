@@ -497,3 +497,134 @@ input::placeholder { color: rgba(234, 246, 255, 0.28); }
   #recordPill { display: none; }
   .panel.wide { max-height: 90vh; }
 }
+
+/* ---------------------------------------------------------------- mode rythme */
+.trackList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.trackCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.028);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.12s;
+}
+.trackCard:hover { background: rgba(255, 255, 255, 0.05); transform: translateY(-1px); }
+.trackCard.sel {
+  border-color: rgba(92, 225, 255, 0.55);
+  background: rgba(92, 225, 255, 0.09);
+  box-shadow: 0 0 0 1px rgba(92, 225, 255, 0.2), 0 8px 24px rgba(92, 225, 255, 0.08);
+}
+
+.trackDot { width: 9px; height: 9px; border-radius: 50%; display: block; margin-bottom: 3px; }
+.trackName { font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; }
+.trackMeta { font-family: var(--mono); font-size: 9.5px; color: rgba(234, 246, 255, 0.45); }
+
+.botRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.botLabel {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(234, 246, 255, 0.45);
+}
+
+.seg {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  color: rgba(234, 246, 255, 0.55);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 7px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, opacity 0.2s;
+  min-width: 34px;
+}
+.seg button.active { background: rgba(92, 225, 255, 0.16); color: #d8f6ff; }
+.seg button:disabled { opacity: 0.45; cursor: default; }
+
+.select {
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  outline: none;
+}
+.select:disabled { opacity: 0.6; }
+
+.roomSettings {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.roomSettings #modeSeg button { min-width: 74px; }
+#roomRhythmOpts { width: 100%; }
+
+.spotifyBox {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px 12px;
+  text-align: left;
+}
+.spotifyBox summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(234, 246, 255, 0.7);
+  list-style: none;
+}
+.spotifyBox summary::-webkit-details-marker { display: none; }
+.spotifyBox[open] summary { margin-bottom: 10px; }
+.spotifyBox input { margin-bottom: 8px; }
+.spotifyBox .ghost { width: 100%; margin-bottom: 8px; padding: 11px 14px; font-size: 10.5px; }
+
+.spRow { display: grid; grid-template-columns: 74px 1fr 1fr; gap: 7px; }
+.spRow input { margin-bottom: 0; text-align: center; font-family: var(--mono); }
+.spRow .ghost { margin-bottom: 0; padding: 10px 8px; }
+
+@media (max-width: 420px) {
+  .trackList { gap: 7px; }
+  .trackCard { padding: 9px 10px; }
+  .trackName { font-size: 11.5px; }
+  .spRow { grid-template-columns: 64px 1fr 1fr; }
+  .spRow .ghost { font-size: 9.5px; }
+}

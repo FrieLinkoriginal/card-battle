@@ -128,6 +128,10 @@
   let AC = null;
 
   function audio() {
+    if (window.Music) {
+      const shared = Music.context();
+      if (shared) return shared;
+    }
     if (!AC) {
       const C = window.AudioContext || window.webkitAudioContext;
       if (!C) return null;
@@ -267,6 +271,7 @@
 
   // ---------------------------------------------------------------- état
   const G = {
+    rule: 'arcade',      // arcade | rhythm
     mode: 'solo',        // solo | online
     screen: 'menu',      // menu | countdown | play | dying | spectate | over
     theta: -Math.PI / 2,
@@ -643,6 +648,17 @@
     const ox = sh > 0.001 ? (Math.random() - 0.5) * sh * 22 : 0;
     const oy = sh > 0.001 ? (Math.random() - 0.5) * sh * 22 : 0;
 
+    if (G.rule === 'rhythm') {
+      drawRhythmScene(ox, oy);
+      if (G.flash > 0.001) {
+        ctx.globalAlpha = clamp(G.flash, 0, 1) * 0.34;
+        ctx.fillStyle = 'rgb(' + G.flashColor + ')';
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalAlpha = 1;
+      }
+      return;
+    }
+
     ctx.save();
     ctx.translate(ox, oy);
     drawStars();
@@ -678,7 +694,9 @@
     G.pulse = Math.max(0, G.pulse - dt * 4);
     G.cooldown = Math.max(0, G.cooldown - dt);
 
-    if (G.screen === 'menu') {
+    if (G.rule === 'rhythm') {
+      ryUpdate(dt);
+    } else if (G.screen === 'menu') {
       G.theta = (G.theta + 1.25 * dt) % TAU;
     } else if (G.screen === 'countdown') {
       if (Date.now() >= G.startsAt) {
@@ -783,6 +801,9 @@
 
   function startSolo() {
     leaveRoom(true);
+    if (window.Music) Music.stop();
+    RHY.active = false;
+    G.rule = 'arcade';
     G.mode = 'solo';
     G.rng = null;
     resetRun();
@@ -915,6 +936,7 @@
   }
 
   function press() {
+    if (G.rule === 'rhythm') { ryPress(); return; }
     if (G.screen !== 'play' || G.cooldown > 0) return;
     if (isOverlayVisible()) return;
 
@@ -1005,7 +1027,9 @@
     const canStart = ROOM.host && list.length >= 2 && list.length <= 5;
     const btn = $('startMatchBtn');
     btn.disabled = !canStart;
-    btn.textContent = ROOM.host ? (list.length < 2 ? 'En attente de joueurs' : 'Lancer la partie') : 'En attente de l\'hôte';
+    const what = roomMode === 'rhythm' ? 'Lancer le morceau' : 'Lancer la partie';
+    btn.textContent = ROOM.host ? (list.length < 2 ? 'En attente de joueurs' : what) : 'En attente de l\'hôte';
+    renderRoomSettings();
 
     let status;
     if (!ROOM.active) status = 'Déconnecté.';
@@ -1033,6 +1057,7 @@
   }
 
   function createRoom() {
+    audio();
     if (!TempoOnline.available()) {
       setOnlineStatus('Réseau indisponible : recharge la page.', true);
       return;
@@ -1058,6 +1083,7 @@
   }
 
   function joinRoom() {
+    audio();
     if (!TempoOnline.available()) {
       setOnlineStatus('Réseau indisponible : recharge la page.', true);
       return;
@@ -1112,18 +1138,106 @@
     }
     if (roster.length < 2) { toast('Il faut au moins 2 joueurs'); return; }
 
-    const payload = {
+    const common = {
       seed: Math.floor(Math.random() * 2147483647) + 1,
-      startsAt: Date.now() + 2600,
+      startsAt: Date.now() + 2800,
       round: Date.now(),
       roster
     };
-    TempoOnline.send('start', payload);
-    beginOnlineMatch(payload);
+
+    if (roomMode === 'rhythm') {
+      const spotifyWanted = roomTrackId === 'spotify' && !!RHY.spotifyTrack && TempoSpotify.loggedIn();
+      const builtin = Music.byId(roomTrackId) || Music.tracks[0];
+      const bpm = spotifyWanted ? spotifyBpm() : builtin.bpm;
+      const bars = spotifyWanted
+        ? Math.max(8, Math.floor(((RHY.spotifyTrack.duration || 180) * bpm) / 240))
+        : builtin.bars;
+
+      const payload = Object.assign({}, common, {
+        kind: 'rhythm',
+        trackId: spotifyWanted ? 'spotify' : builtin.id,
+        trackName: spotifyWanted ? RHY.spotifyTrack.name : builtin.name,
+        bpm: bpm,
+        bars: bars,
+        bots: roomBots,
+        skill: botSkill,
+        spotifyUri: spotifyWanted ? RHY.spotifyTrack.uri : null,
+        spotifyDuration: spotifyWanted ? RHY.spotifyTrack.duration : 0
+      });
+
+      TempoOnline.send('start', payload);
+      beginOnlineRhythm(payload);
+      return;
+    }
+
+    TempoOnline.send('start', Object.assign({}, common, { kind: 'arcade' }));
+    beginOnlineMatch(common);
+  }
+
+  function beginOnlineRhythm(payload) {
+    if (!payload || !payload.roster || payload.roster.length < 2) return;
+
+    ROOM.match = {
+      seed: payload.seed,
+      round: payload.round,
+      roster: payload.roster.slice(0, 5),
+      states: {},
+      startAt: payload.startsAt,
+      rhythm: true
+    };
+    ROOM.match.roster.forEach((p) => {
+      ROOM.match.states[p.id] = { lives: MAX_LIVES, score: 0, alive: true, deadAt: 0 };
+    });
+    ROOM.ended = false;
+    ROOM.endTimer = 0;
+
+    const spotifyOk = !!payload.spotifyUri && TempoSpotify.loggedIn();
+    const track = spotifyOk
+      ? Music.customTrack(payload.bpm, payload.bars, payload.trackName || 'Spotify')
+      : (Music.byId(payload.trackId) || Music.customTrack(payload.bpm, payload.bars, payload.trackName || 'Tempo'));
+
+    rySetup({
+      track: track,
+      bpm: payload.bpm,
+      bars: payload.bars,
+      seed: payload.seed,
+      startsAt: payload.startsAt,
+      botCount: payload.bots | 0,
+      skill: payload.skill === undefined ? botSkill : payload.skill,
+      online: true,
+      spotify: spotifyOk,
+      spotifyTrack: spotifyOk
+        ? { uri: payload.spotifyUri, duration: payload.spotifyDuration || 180, name: payload.trackName }
+        : null
+    });
+
+    if (spotifyOk) {
+      TempoSpotify.loadTrack(payload.spotifyUri)
+        .then(() => TempoSpotify.play(0))
+        .catch((e) => toast('Spotify : ' + e.message, true));
+    } else if (payload.spotifyUri) {
+      toast('Spotify indisponible ici : musique synthétisée à la place', true);
+    }
+  }
+
+  function applyRoomSettings(s) {
+    if (!s) return;
+    if (s.mode === 'rhythm' || s.mode === 'arcade') roomMode = s.mode;
+    if (s.trackId) roomTrackId = s.trackId;
+    if (s.bots !== undefined) roomBots = clamp(s.bots | 0, 0, 3);
+    renderRoomSettings();
+    renderRoom();
+  }
+
+  function pushRoomSettings() {
+    if (!ROOM.active) return;
+    TempoOnline.send('settings', { mode: roomMode, trackId: roomTrackId, bots: roomBots });
   }
 
   function beginOnlineMatch(payload) {
     if (!payload || !payload.roster || payload.roster.length < 2) return;
+    G.rule = 'arcade';
+    Music.stop();
 
     const roster = payload.roster.slice(0, 5);
     if (!roster.some((p) => p.id === myId())) {
@@ -1159,7 +1273,14 @@
     const p = msg.payload || {};
 
     if (msg.event === 'start') {
-      if (ROOM.active) beginOnlineMatch(p);
+      if (!ROOM.active) return;
+      if (p.kind === 'rhythm') beginOnlineRhythm(p);
+      else beginOnlineMatch(p);
+      return;
+    }
+
+    if (msg.event === 'settings') {
+      applyRoomSettings(p);
       return;
     }
 
@@ -1186,7 +1307,7 @@
   function updateOnline(dt) {
     if (!ROOM.active) return;
 
-    if (ROOM.match && !ROOM.ended && G.screen !== 'over') {
+    if (ROOM.match && !ROOM.ended && G.screen !== 'over' && G.rule !== 'rhythm') {
       // Déconnexions : un joueur absent depuis 4 s est éliminé.
       const present = {};
       ROOM.players.forEach((p) => { present[p.id] = true; });
@@ -1308,6 +1429,7 @@
   function toggleMute() {
     profile.muted = !profile.muted;
     saveProfile();
+    if (window.Music) Music.setMuted(profile.muted);
     updateMuteBtn();
     if (!profile.muted) tone(660, 0.08, 'sine', 0.04);
   }
@@ -1380,6 +1502,10 @@
   // ---------------------------------------------------------------- navigation
   function goHome() {
     leaveRoom(true);
+    if (window.Music) Music.stop();
+    if (RHY.spotifyMode && window.TempoSpotify) TempoSpotify.pause();
+    RHY.active = false;
+    G.rule = 'arcade';
     G.mode = 'solo';
     G.screen = 'menu';
     G.rng = null;
@@ -1406,7 +1532,595 @@
       else toast('L\'hôte doit lancer la revanche');
       return;
     }
+    if (G.rule === 'rhythm') { startRhythmSolo(); return; }
     startSolo();
+  }
+
+  // ---------------------------------------------------------------- mode rythme
+  const RHY = {
+    active: false,
+    track: null,
+    notes: [],
+    next: 0,
+    duration: 0,
+    startsAt: 0,
+    ended: false,
+    useWall: false,
+    spotifyMode: false,
+    spotifyTrack: null,
+    bots: [],
+    rivals: [],
+    botSkill: 0.72,
+    lastOpts: null
+  };
+
+  const NOTE_BEAT = TAU / 4;
+  const HIT_WINDOW = 0.10;
+  const PERFECT_WINDOW = 0.035;
+  const BOT_NAMES = ['Nova', 'Echo', 'Vex'];
+  const BOT_SKINS = ['p04', 'p09', 'p18'];
+
+  let rhythmTrackId = 'neon';
+  let botCount = 2;
+  let botSkill = 0.72;
+  let roomMode = 'arcade';
+  let roomTrackId = 'neon';
+  let roomBots = 2;
+
+  const TRACK_HUE = { neon: 190, pulse: 320, nuit: 265, orage: 140, spotify: 150 };
+
+  function ryHue() {
+    if (!RHY.track) return 190;
+    return TRACK_HUE[RHY.track.id] === undefined ? 190 : TRACK_HUE[RHY.track.id];
+  }
+
+  function noteAngle(beat) { return -Math.PI / 2 + beat * NOTE_BEAT; }
+
+  function ryBuildNotes(bpm, bars) {
+    const beat = 60 / bpm;
+    const notes = [];
+    for (let b = 4; b < bars * 4; b++) {
+      notes.push({ t: b * beat, angle: noteAngle(b), golden: b % 16 === 0, done: false, hit: false });
+    }
+    return notes;
+  }
+
+  function ryTime() {
+    if (RHY.spotifyMode) return TempoSpotify.position();
+    if (RHY.useWall) return (Date.now() - RHY.startsAt) / 1000;
+    return Music.time();
+  }
+
+  function ryBeat() { return 60 / (RHY.track ? RHY.track.bpm : 120); }
+  function ryTheta() { return -Math.PI / 2 + (ryTime() / ryBeat()) * NOTE_BEAT; }
+
+  function ryMakeBot(index, name, skill, notes, seed) {
+    const rnd = mulberry32((seed || 1) * 31 + index * 7919 + 13);
+    const cumScore = [];
+    const cumLives = [];
+    let score = 0;
+    let combo = 0;
+    let lives = 3;
+
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      if (rnd() < skill) {
+        combo += 1;
+        const perfect = rnd() < 0.12 + skill * 0.28;
+        const mult = Math.min(5, 1 + Math.floor(combo / 8));
+        score += Math.round(100 * mult * (n.golden ? 3 : 1) * (perfect ? 1.5 : 1));
+      } else {
+        combo = 0;
+        lives -= 1;
+        if (lives <= 0) { score = Math.round(score * 0.8); lives = 1; }
+      }
+      cumScore.push(score);
+      cumLives.push(lives);
+    }
+
+    return {
+      id: 'bot' + index,
+      name: name,
+      skin: BOT_SKINS[index % BOT_SKINS.length],
+      isBot: true,
+      cursor: 0,
+      cumScore: cumScore,
+      cumLives: cumLives,
+      score: 0,
+      lives: 3
+    };
+  }
+
+  function rySetup(opts) {
+    const track = opts.track;
+    const notes = ryBuildNotes(opts.bpm || track.bpm, opts.bars || track.bars);
+
+    RHY.track = track;
+    RHY.notes = notes;
+    RHY.next = 0;
+    RHY.ended = false;
+    RHY.active = true;
+    RHY.spotifyMode = !!opts.spotify;
+    RHY.spotifyTrack = opts.spotifyTrack || null;
+    RHY.botSkill = opts.skill === undefined ? botSkill : opts.skill;
+    RHY.rivals = [];
+    RHY.bots = [];
+
+    const count = Math.max(0, Math.min(3, opts.botCount === undefined ? botCount : opts.botCount));
+    for (let i = 0; i < count; i++) {
+      RHY.bots.push(ryMakeBot(i, BOT_NAMES[i], RHY.botSkill, notes, opts.seed || 1));
+    }
+
+    const beat = 60 / (opts.bpm || track.bpm);
+
+    if (RHY.spotifyMode) {
+      const dur = (opts.spotifyTrack && opts.spotifyTrack.duration) || 180;
+      RHY.duration = dur;
+      RHY.startsAt = Date.now();
+      RHY.useWall = false;
+      G.screen = 'play';
+      G.startsAt = RHY.startsAt - 1500;
+    } else {
+      RHY.duration = (notes.length + 4) * beat;
+      RHY.startsAt = opts.startsAt || (Date.now() + 2200);
+      const delay = Math.max(0.25, (RHY.startsAt - Date.now()) / 1000);
+      RHY.useWall = !Music.start(track, delay);
+      G.startsAt = RHY.startsAt;
+      G.screen = 'countdown';
+    }
+
+    G.rule = 'rhythm';
+    G.mode = opts.online ? 'online' : 'solo';
+    G.rng = null;
+    resetRun();
+    G.screen = RHY.spotifyMode ? 'play' : 'countdown';
+    G.cooldown = 0.1;
+    RHY.lastOpts = opts;
+    hideOverlay();
+    audio();
+    if (RHY.spotifyMode) {
+      TempoSpotify.play(0).catch((e) => toast('Spotify : ' + e.message, true));
+    }
+    toast('Le meilleur score à la fin du morceau gagne', true);
+  }
+
+  async function startRhythmSolo() {
+    audio();
+    const useSpotify = rhythmTrackId === 'spotify';
+    if (useSpotify) {
+      if (!RHY.spotifyTrack) { toast('Charge d\'abord un morceau Spotify'); return; }
+      if (!TempoSpotify.loggedIn()) { toast('Connecte-toi à Spotify'); return; }
+    }
+    const track = useSpotify
+      ? Music.customTrack(spotifyBpm(), 48, RHY.spotifyTrack.name)
+      : (Music.byId(rhythmTrackId) || Music.tracks[0]);
+
+    if (useSpotify) {
+      try {
+        const ready = await TempoSpotify.initPlayer();
+        if (!ready) throw new Error('lecteur indisponible (Premium requis)');
+        await TempoSpotify.play(0);
+      } catch (e) {
+        toast('Spotify : ' + e.message, true);
+        return;
+      }
+    }
+
+    rySetup({
+      track: track,
+      bpm: useSpotify ? spotifyBpm() : track.bpm,
+      bars: useSpotify ? Math.max(8, Math.floor(((RHY.spotifyTrack.duration || 180) * spotifyBpm()) / 240)) : track.bars,
+      seed: Math.floor(Math.random() * 2147483647) + 1,
+      botCount: botCount,
+      skill: botSkill,
+      online: false,
+      spotify: useSpotify,
+      spotifyTrack: RHY.spotifyTrack
+    });
+  }
+
+  function spotifyBpm() {
+    const v = parseInt($('spBpmInput').value, 10);
+    return clamp(isFinite(v) ? v : 120, 50, 220);
+  }
+
+  function ryPress() {
+    if (G.screen !== 'play' || G.cooldown > 0) return;
+    const t = ryTime();
+    let idx = -1;
+    let err = 1e9;
+
+    for (let i = RHY.next; i < Math.min(RHY.notes.length, RHY.next + 3); i++) {
+      const n = RHY.notes[i];
+      if (n.done) continue;
+      const e = Math.abs(t - n.t);
+      if (e < err) { err = e; idx = i; }
+    }
+
+    if (idx < 0 || err > HIT_WINDOW) {
+      // appui à contretemps : ignoré, aucune punition
+      G.flash = Math.max(G.flash, 0.12);
+      G.flashColor = '255,255,255';
+      return;
+    }
+
+    const n = RHY.notes[idx];
+    n.done = true;
+    n.hit = true;
+
+    const perfect = err <= PERFECT_WINDOW;
+    G.combo += 1;
+    G.hits += 1;
+    if (perfect) G.perfects += 1;
+    if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+
+    const mult = Math.min(5, 1 + Math.floor(G.combo / 8));
+    const gain = Math.round(100 * mult * (n.golden ? 3 : 1) * (perfect ? 1.5 : 1));
+    G.score += gain;
+
+    const col = n.golden ? 'hsl(45 100% 65%)' : 'hsl(' + ryHue() + ' 100% 68%)';
+    const px = cx + Math.cos(n.angle) * R;
+    const py = cy + Math.sin(n.angle) * R;
+    burst(px, py, col, perfect ? 20 : 10, perfect ? 320 : 210, 1.1);
+    ringPulse(col, perfect ? 4 : 2.2);
+    G.shake = Math.max(G.shake, perfect ? 0.28 : 0.12);
+    floatText(px, py - 16, perfect ? 'PARFAIT' : '+' + gain, perfect ? '#ffffff' : col, perfect ? 21 : 17);
+    if (n.golden) sfx.gold(); else sfx.hit(G.combo, perfect);
+
+    if (!G.beatRecord && profile.best > 0 && G.score > profile.best) {
+      G.beatRecord = true;
+      G.flash = 0.35;
+      G.flashColor = '255,215,106';
+      floatText(cx, cy - R * 0.68, 'NOUVEAU RECORD', '#ffd76a', 20);
+    }
+
+    G.cooldown = 0.04;
+    if (G.mode === 'online') sendState(true);
+  }
+
+  function ryMiss(n) {
+    G.combo = 0;
+    G.lives -= 1;
+    G.shake = 0.9;
+    G.flash = 0.7;
+    G.flashColor = '255,70,95';
+
+    const px = cx + Math.cos(n ? n.angle : G.theta) * R;
+    const py = cy + Math.sin(n ? n.angle : G.theta) * R;
+    burst(px, py, '#ff5a72', 14, 240);
+    floatText(cx, cy + R * 0.78, 'RATÉ', '#ff7f92', 20);
+    sfx.miss();
+
+    if (G.lives <= 0) {
+      const lost = Math.round(G.score * 0.2);
+      G.score = Math.max(0, G.score - lost);
+      G.lives = 1;
+      G.flash = 1;
+      G.shake = 1.4;
+      floatText(cx, cy - R * 0.55, 'KO −20 %', '#ff8fa3', 26);
+      sfx.over();
+    }
+
+    renderLives();
+    if (G.mode === 'online') sendState(true);
+  }
+
+  function updateBots(t) {
+    for (let b = 0; b < RHY.bots.length; b++) {
+      const bot = RHY.bots[b];
+      const notes = RHY.notes;
+      while (bot.cursor < notes.length && notes[bot.cursor].t <= t) bot.cursor += 1;
+      const i = bot.cursor - 1;
+      bot.score = i >= 0 ? bot.cumScore[i] : 0;
+      bot.lives = i >= 0 ? bot.cumLives[i] : 3;
+    }
+  }
+
+  function updateRhythmRivals() {
+    if (!ROOM.match) return;
+    RHY.rivals = ROOM.match.roster.filter((p) => p.id !== myId()).map((p) => {
+      const st = ROOM.match.states[p.id] || { score: 0, lives: 3 };
+      return { id: p.id, name: p.name, skin: p.skin, score: st.score || 0, lives: st.lives === undefined ? 3 : st.lives };
+    });
+  }
+
+  function ryStandings() {
+    const rows = [{
+      id: myId(),
+      name: profile.name,
+      skin: profile.skin,
+      score: G.score,
+      lives: G.lives,
+      isMe: true
+    }];
+    RHY.bots.forEach((b) => rows.push({
+      id: b.id, name: b.name, skin: b.skin, score: b.score, lives: b.lives, isBot: true
+    }));
+    RHY.rivals.forEach((r) => rows.push({
+      id: r.id, name: r.name, skin: r.skin, score: r.score, lives: r.lives
+    }));
+    rows.sort((a, b) => b.score - a.score);
+    return rows;
+  }
+
+  function ryUpdate(dt) {
+    if (!RHY.active) return;
+
+    if (G.screen === 'countdown') {
+      if (ryTime() >= 0) {
+        G.screen = 'play';
+        G.cooldown = 0.05;
+      }
+      return;
+    }
+    if (G.screen !== 'play') return;
+
+    const t = ryTime();
+    updateBots(t);
+    if (G.mode === 'online') updateRhythmRivals();
+
+    const gap = t - (RHY.lastT || 0);
+    RHY.lastT = t;
+
+    while (RHY.next < RHY.notes.length && RHY.notes[RHY.next].t < t - HIT_WINDOW) {
+      const n = RHY.notes[RHY.next];
+      if (!n.done) {
+        n.done = true;
+        // retour d'onglet : on se resynchronise sans punir
+        if (gap <= 0.7) ryMiss(n);
+      }
+      RHY.next += 1;
+    }
+
+    // filet de sécurité Spotify : si la lecture ne démarre pas, on passe à l'horloge locale
+    if (RHY.spotifyMode && !RHY.useWall) {
+      if (t < 0.4) RHY.frozen = (RHY.frozen || 0) + dt;
+      else RHY.frozen = 0;
+      if (RHY.frozen > 6) {
+        RHY.useWall = true;
+        RHY.startsAt = Date.now() - Math.max(0, t) * 1000;
+        RHY.frozen = 0;
+        toast('Lecture Spotify bloquée : on continue sans le son', true);
+      }
+    }
+
+    if (G.mode === 'online') {
+      G.nsent += dt;
+      if (G.nsent > 0.45) { G.nsent = 0; sendState(false); }
+    }
+
+    if (t >= RHY.duration) ryEnd();
+  }
+
+  function ryEnd() {
+    if (RHY.ended) return;
+    RHY.ended = true;
+    RHY.active = false;
+    Music.stop();
+    if (RHY.spotifyMode) TempoSpotify.pause();
+    G.screen = 'over';
+
+    const rows = ryStandings();
+    const myIndex = rows.findIndex((r) => r.isMe);
+    const myRank = myIndex >= 0 ? myIndex + 1 : rows.length;
+
+    let earned = 30;
+    if (myRank === 1) earned = 150;
+    else if (myRank === 2) earned = 75;
+
+    if (myRank === 1) { profile.wins += 1; sfx.win(); } else sfx.over();
+    profile.best = Math.max(profile.best, G.score);
+    profile.bestCombo = Math.max(profile.bestCombo, G.bestCombo);
+    profile.runs += 1;
+    profile.points += earned;
+    saveProfile();
+    syncHud();
+
+    $('overLabel').textContent = myRank === 1 ? '🏆 Meilleur score' : myRank + 'ᵉ au classement';
+    $('finalScore').textContent = fmt(G.score);
+    $('recordLine').textContent = (RHY.track ? RHY.track.name : 'Morceau') + ' · ' + rows.length + ' joueurs';
+    $('recordLine').classList.toggle('new', myRank === 1);
+
+    $('finalStats').innerHTML = rows.map((r, i) => {
+      const skin = SKINS.byId[r.skin] || SKINS.byId[SKINS.DEFAULT_ID];
+      return '<div class="resultRow' + (r.isMe ? ' self' : '') + (i === 0 ? ' first' : '') + '">' +
+        '<span class="resultRank">' + (i + 1) + '</span>' +
+        '<span class="swatch" style="' + SKINS.swatch(skin) + '"><i></i></span>' +
+        '<span class="resultName">' + escapeHtml(r.name) + '</span>' +
+        '<span class="resultScore">' + fmt(r.score) + '</span>' +
+        '</div>';
+    }).join('') + '<p class="earned">+' + fmt(earned) + ' ◆</p>';
+
+    const btn = $('retryBtn');
+    if (ROOM.active && !ROOM.host) {
+      btn.textContent = 'En attente de l\'hôte';
+      btn.disabled = true;
+      $('overHint').textContent = 'L\'hôte peut relancer un morceau';
+    } else {
+      btn.textContent = 'Rejouer';
+      btn.disabled = false;
+      $('overHint').textContent = 'Espace pour rejouer';
+    }
+    $('homeBtn').classList.remove('hidden');
+    showPanel('overPanel');
+  }
+
+  // ---------------------------------------------------------------- rendu rythme
+  function drawRhythmScene(ox, oy) {
+    const t = ryTime();
+    const beat = ryBeat();
+    const theta = ryTheta();
+
+    ctx.save();
+    ctx.translate(ox, oy);
+
+    drawStars();
+    drawDisc();
+
+    // progression du morceau
+    const prog = clamp(t / Math.max(1, RHY.duration), 0, 1);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 24, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = 'hsl(' + ryHue() + ' 100% 62%)';
+    ctx.shadowColor = 'hsl(' + ryHue() + ' 100% 62%)';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 24, -Math.PI / 2, -Math.PI / 2 + prog * TAU);
+    ctx.stroke();
+    ctx.restore();
+
+    SKINS.ring(ctx, cx, cy, R, mySkin(), G.time, 6);
+    drawTicks();
+
+    // notes à venir
+    const winAngle = (HIT_WINDOW / (4 * beat)) * TAU;
+    const perfectAngle = (PERFECT_WINDOW / (4 * beat)) * TAU;
+    const last = Math.min(RHY.notes.length, RHY.next + 5);
+
+    for (let i = RHY.next; i < last; i++) {
+      const n = RHY.notes[i];
+      if (n.done) continue;
+      const dt = n.t - t;
+      const near = clamp(1 - dt / (2.2 * beat), 0, 1);
+      const col = n.golden ? 'hsl(45 100% 64%)' : 'hsl(' + ryHue() + ' 100% 64%)';
+
+      ctx.save();
+      ctx.globalAlpha = 0.22 + near * 0.78;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = col;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 18 + near * 16;
+      ctx.lineWidth = 13 + near * 4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, n.angle - winAngle, n.angle + winAngle);
+      ctx.stroke();
+
+      ctx.globalAlpha = 0.35 + near * 0.65;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, n.angle - perfectAngle, n.angle + perfectAngle);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // aiguille
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const accent = mySkin().colors[0] || '#5ce1ff';
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 2.6;
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.moveTo(cx + cos * (R - 18), cy + sin * (R - 18));
+    ctx.lineTo(cx + cos * (R + 18), cy + sin * (R + 18));
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowBlur = 22;
+    ctx.beginPath();
+    ctx.arc(cx + cos * R, cy + sin * R, 5.6, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+
+    drawRings();
+    drawParticles();
+
+    // score central
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const scoreText = fmt(G.score);
+    let size = Math.round(R * 0.40);
+    ctx.font = '700 ' + size + 'px ' + MONO;
+    let w = ctx.measureText(scoreText).width;
+    if (w > R * 1.3) {
+      size = Math.max(16, Math.floor((size * R * 1.3) / w));
+      ctx.font = '700 ' + size + 'px ' + MONO;
+    }
+    ctx.fillStyle = '#f2fbff';
+    ctx.shadowColor = 'hsla(' + ryHue() + ' 100% 60% / 0.5)';
+    ctx.shadowBlur = 22;
+    ctx.fillText(scoreText, cx, cy - R * 0.06);
+    ctx.shadowBlur = 0;
+
+    if (G.combo > 1) {
+      ctx.font = '700 ' + Math.round(R * 0.10) + 'px ' + SANS;
+      ctx.fillStyle = 'hsl(' + ryHue() + ' 100% 70%)';
+      ctx.fillText('COMBO ×' + G.combo, cx, cy + R * 0.26);
+    }
+
+    const remain = Math.max(0, RHY.duration - Math.max(0, t));
+    ctx.font = '600 ' + Math.round(R * 0.078) + 'px ' + SANS;
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
+    const label = (RHY.track ? RHY.track.name.toUpperCase() : 'TEMPO') + ' · ' + Math.ceil(remain) + ' s';
+    ctx.fillText(label, cx, cy + R * 0.46);
+
+    ctx.restore();
+
+    if (G.screen === 'countdown') drawCountdown();
+    drawFloats();
+    ctx.restore();
+
+    drawRhythmChips();
+
+    // classement en direct
+    const rows = ryStandings();
+    const rank = rows.findIndex((r) => r.isMe) + 1;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '700 12px ' + SANS;
+    ctx.fillStyle = rows.length > 1 ? (rank === 1 ? '#ffd76a' : 'rgba(234,246,255,0.55)') : 'rgba(234,246,255,0.4)';
+    ctx.fillText(rank + ' / ' + rows.length, cx, cy - R - 44);
+    ctx.restore();
+  }
+
+  function drawRhythmChips() {
+    const rows = ryStandings().filter((r) => !r.isMe);
+    if (!rows.length) return;
+
+    const n = rows.length;
+    const slot = Math.min(88, (W - 24) / n);
+    const y = H - 52;
+    const startX = W / 2 - (n * slot) / 2 + slot / 2;
+    const small = slot < 64;
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let i = 0; i < n; i++) {
+      const p = rows[i];
+      const skin = SKINS.byId[p.skin] || SKINS.byId[SKINS.DEFAULT_ID];
+      const x = startX + i * slot;
+      const rad = Math.min(24, slot * 0.28);
+
+      SKINS.ring(ctx, x, y, rad, skin, G.time, small ? 3 : 3.6);
+
+      ctx.font = '600 ' + (small ? 8 : 9) + 'px ' + SANS;
+      ctx.fillStyle = 'rgba(234,246,255,0.62)';
+      const nm = p.name.length > 9 ? p.name.slice(0, 8) + '…' : p.name;
+      ctx.fillText(nm, x, y - rad - 13);
+
+      ctx.font = '700 ' + (small ? 8 : 9.5) + 'px ' + MONO;
+      ctx.fillStyle = i === 0 ? '#ffd76a' : 'rgba(255,255,255,0.85)';
+      ctx.fillText(fmt(p.score), x, y + rad + 13);
+
+      for (let k = 0; k < MAX_LIVES; k++) {
+        ctx.beginPath();
+        ctx.fillStyle = k < (p.lives || 0) ? 'rgba(126,240,255,0.95)' : 'rgba(255,255,255,0.13)';
+        ctx.arc(x - 7 + k * 7, y + rad + 25, 1.9, 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------- entrées
@@ -1491,13 +2205,214 @@
   window.addEventListener('blur', () => { last = performance.now(); });
   document.addEventListener('visibilitychange', () => { last = performance.now(); });
 
+  // ---------------------------------------------------------------- interfaces rythme
+  function openRhythm() {
+    renderRhythmPanel();
+    showPanel('rhythmPanel');
+  }
+
+  function renderRhythmPanel() {
+    const cards = Music.tracks.map((t) => {
+      const sel = rhythmTrackId === t.id;
+      return '<button class="trackCard' + (sel ? ' sel' : '') + '" data-track="' + t.id + '">' +
+        '<span class="trackDot" style="background:' + t.accent + ';box-shadow:0 0 14px ' + t.accent + '"></span>' +
+        '<span class="trackName">' + escapeHtml(t.name) + '</span>' +
+        '<span class="trackMeta">' + t.bpm + ' BPM · ' + Math.round(Music.duration(t)) + ' s</span>' +
+        '</button>';
+    });
+
+    if (RHY.spotifyTrack) {
+      cards.push('<button class="trackCard' + (rhythmTrackId === 'spotify' ? ' sel' : '') + '" data-track="spotify">' +
+        '<span class="trackDot" style="background:#1db954;box-shadow:0 0 14px #1db954"></span>' +
+        '<span class="trackName">' + escapeHtml(RHY.spotifyTrack.name) + '</span>' +
+        '<span class="trackMeta">Spotify · ' + spotifyBpm() + ' BPM</span>' +
+        '</button>');
+    }
+
+    const list = $('trackList');
+    if (list) list.innerHTML = cards.join('');
+
+    document.querySelectorAll('#botSeg button').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.bots) === botCount);
+    });
+    document.querySelectorAll('#skillSeg button').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.skill) === botSkill);
+    });
+
+    const btn = $('startRhythmBtn');
+    if (btn) btn.textContent = rhythmTrackId === 'spotify' ? 'Lancer sur Spotify' : 'Lancer le morceau';
+  }
+
+  function renderRoomSettings() {
+    const seg = $('modeSeg');
+    if (!seg) return;
+
+    document.querySelectorAll('#modeSeg button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === roomMode);
+      b.disabled = !ROOM.host;
+    });
+
+    const opts = $('roomRhythmOpts');
+    if (opts) opts.classList.toggle('hidden', roomMode !== 'rhythm');
+
+    const sel = $('roomTrack');
+    if (sel) {
+      let html = Music.tracks.map((t) =>
+        '<option value="' + t.id + '">' + escapeHtml(t.name) + ' · ' + t.bpm + ' BPM</option>').join('');
+      if (RHY.spotifyTrack) {
+        html += '<option value="spotify">Spotify · ' + escapeHtml(RHY.spotifyTrack.name) + '</option>';
+      }
+      sel.innerHTML = html;
+      if (!Music.byId(roomTrackId) && roomTrackId !== 'spotify') roomTrackId = 'neon';
+      sel.value = roomTrackId;
+      sel.disabled = !ROOM.host;
+    }
+
+    document.querySelectorAll('#roomBotSeg button').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.bots) === roomBots);
+      b.disabled = !ROOM.host;
+    });
+  }
+
+  // ---------------------------------------------------------------- Spotify
+  let tapTimes = [];
+
+  function tapTempo() {
+    const now = performance.now();
+    if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > 2200) tapTimes = [];
+    tapTimes.push(now);
+    if (tapTimes.length > 6) tapTimes.shift();
+    if (tapTimes.length >= 2) {
+      let sum = 0;
+      for (let i = 1; i < tapTimes.length; i++) sum += tapTimes[i] - tapTimes[i - 1];
+      const bpm = Math.round(60000 / (sum / (tapTimes.length - 1)));
+      if (bpm >= 50 && bpm <= 220) {
+        $('spBpmInput').value = bpm;
+        renderRhythmPanel();
+      }
+    }
+  }
+
+  function refreshSpotifyUi(snap) {
+    if (!snap && window.TempoSpotify) snap = TempoSpotify.snapshot();
+    if (!snap || !$('spStatus')) return;
+    const parts = [];
+    parts.push(snap.loggedIn ? 'Compte connecté' : 'Non connecté');
+    if (snap.loggedIn) parts.push(snap.ready ? 'lecteur prêt' : 'lecteur en attente');
+    $('spStatus').textContent = parts.join(' · ') + ' — ' + snap.status;
+    $('spConnectBtn').textContent = snap.loggedIn ? 'Se déconnecter' : 'Se connecter à Spotify';
+    $('spHint').textContent = snap.loggedIn
+      ? 'Colle un lien, règle le BPM (tap tempo), puis lance. Premium requis pour entendre le morceau.'
+      : 'Redirection à autoriser dans ton dashboard Spotify : ' + snap.redirect;
+  }
+
+  function initSpotifyUi() {
+    if (!window.TempoSpotify) return;
+
+    TempoSpotify.onChange(refreshSpotifyUi);
+    refreshSpotifyUi();
+
+    TempoSpotify.handleCallback().then((ok) => {
+      refreshSpotifyUi();
+      if (ok) toast('Spotify connecté', true);
+    }).catch(() => null);
+
+    $('spConnectBtn').addEventListener('click', () => {
+      const snap = TempoSpotify.snapshot();
+      if (snap.loggedIn) {
+        TempoSpotify.logout();
+        refreshSpotifyUi();
+        toast('Spotify déconnecté');
+        return;
+      }
+      audio();
+      TempoSpotify.connect().catch((e) => toast('Spotify : ' + e.message, true));
+    });
+
+    $('spLoadBtn').addEventListener('click', async () => {
+      try {
+        audio();
+        await TempoSpotify.initPlayer();
+        const track = await TempoSpotify.loadTrack($('spTrackInput').value);
+        RHY.spotifyTrack = { uri: track.uri, name: track.name, duration: (track.duration_ms || 180000) / 1000 };
+        RHY.spotifyTrack.duration = Math.max(30, RHY.spotifyTrack.duration);
+        rhythmTrackId = 'spotify';
+        renderRhythmPanel();
+        refreshSpotifyUi();
+        toast('Morceau prêt : ' + track.name, true);
+      } catch (e) {
+        toast('Spotify : ' + e.message, true);
+      }
+    });
+
+    $('spTapBtn').addEventListener('click', tapTempo);
+  }
+
+  function wireRhythmUi() {
+    $('rhythmBtn').addEventListener('click', () => openRhythm());
+
+    $('startRhythmBtn').addEventListener('click', () => startRhythmSolo());
+
+    $('trackList').addEventListener('click', (e) => {
+      const card = e.target.closest('.trackCard');
+      if (!card) return;
+      rhythmTrackId = card.dataset.track;
+      renderRhythmPanel();
+    });
+
+    document.querySelectorAll('#botSeg button').forEach((b) => {
+      b.addEventListener('click', () => {
+        botCount = clamp(Number(b.dataset.bots) || 0, 0, 3);
+        renderRhythmPanel();
+      });
+    });
+
+    document.querySelectorAll('#skillSeg button').forEach((b) => {
+      b.addEventListener('click', () => {
+        botSkill = Number(b.dataset.skill) || 0.72;
+        renderRhythmPanel();
+      });
+    });
+
+    document.querySelectorAll('#modeSeg button').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (!ROOM.host) return;
+        roomMode = b.dataset.mode;
+        renderRoomSettings();
+        renderRoom();
+        pushRoomSettings();
+      });
+    });
+
+    const sel = $('roomTrack');
+    if (sel) {
+      sel.addEventListener('change', () => {
+        if (!ROOM.host) return;
+        roomTrackId = sel.value;
+        pushRoomSettings();
+      });
+    }
+
+    document.querySelectorAll('#roomBotSeg button').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (!ROOM.host) return;
+        roomBots = clamp(Number(b.dataset.bots) || 0, 0, 3);
+        renderRoomSettings();
+        pushRoomSettings();
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- réseau : abonnements
   if (window.TempoOnline) {
     TempoOnline.on('players', (players) => {
       ROOM.players = players || [];
       const self = ROOM.players.find((p) => p.id === myId());
       if (self) ROOM.host = !!self.isHost;
-      if (ROOM.active) renderRoom();
+      if (ROOM.active) {
+        renderRoom();
+        if (ROOM.host && TempoOnline.state.status === 'ready') pushRoomSettings();
+      }
     });
 
     TempoOnline.on('event', onOnlineEvent);
@@ -1528,6 +2443,10 @@
   window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 
   resize();
+  if (window.Music) Music.setMuted(profile.muted);
+  wireRhythmUi();
+  initSpotifyUi();
+  renderRhythmPanel();
   renderLives();
   syncHud();
   updateMuteBtn();
@@ -1546,5 +2465,5 @@
   requestAnimationFrame(frame);
 
   // expose pour les tests hors navigateur
-  window.__TEMPO__ = { G: G, ROOM: ROOM, profile: profile, SKINS: SKINS };
+  window.__TEMPO__ = { G: G, ROOM: ROOM, RHY: RHY, profile: profile, SKINS: SKINS };
 })();

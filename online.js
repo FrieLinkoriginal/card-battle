@@ -6,7 +6,7 @@ window.TempoOnline = (function () {
   const SUPABASE_URL = 'https://xjktoqdcycjpfzgmukdl.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhqa3RvcWRjeWNqcGZ6Z211a2RsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ5MzkyNTQsImV4cCI6MjExMDUxNTI1NH0.OKM-3gZDPPCEoGGZxste0VR195pz6U5c46o5zoPUUYM';
 
-  const EVENTS = ['start', 'state', 'over', 'bye'];
+  const EVENTS = ['start', 'state', 'over', 'bye', 'settings'];
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   let client = null;
