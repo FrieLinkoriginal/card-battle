@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05070c">
+<title>TEMPO — un seul bouton</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='25' fill='none' stroke='%235ce1ff' stroke-width='5'/%3E%3Ccircle cx='32' cy='7' r='6' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game" aria-label="Terrain de jeu"></canvas>
+
+<div class="hud">
+  <div class="lives" id="lives" aria-label="Vies restantes"></div>
+  <div class="right">
+    <div class="pill" id="record">Record 0</div>
+    <button id="mute" aria-label="Couper le son" title="Son (M)">🔊</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="panel" id="menu">
+    <h1>TEMPO</h1>
+    <p class="tag">Un seul bouton · zéro excuse</p>
+    <p class="how">
+      Appuie quand l'aiguille traverse la zone.<br>
+      Le cœur de la zone = <b>PARFAIT</b> (score ×1,5).<br>
+      Chaque cartouche manquée coûte une vie.
+    </p>
+    <button class="play" id="startBtn">Jouer</button>
+    <p class="hint">Espace · clic · tap</p>
+  </div>
+
+  <div class="panel hidden" id="over">
+    <p class="label">Partie terminée</p>
+    <div class="scoreBig" id="finalScore">0</div>
+    <p class="recordLine" id="recordLine">Record : 0</p>
+    <p class="stats" id="finalStats"></p>
+    <button class="play" id="retryBtn">Rejouer</button>
+    <p class="hint">Espace · clic · tap</p>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
